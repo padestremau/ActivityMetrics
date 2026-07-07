@@ -1,0 +1,9 @@
+data.db
+data.db-journal
+telegram.json
+clients.json
+report.log
+probe.log
+reports/
+__pycache__/
+.DS_Store

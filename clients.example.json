@@ -1,0 +1,45 @@
+{
+  "_README": "GABARIT — copie-le en 'clients.json' (ou lance `python3 activitymetrics.py setup`) puis adapte-le. clients.json est gitignored : ta config reste locale.",
+
+  "sample_seconds": 20,
+  "idle_threshold_seconds": 120,
+  "default_project": "Perso",
+
+  "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUTES les clés de 'match' correspondent ; la 'priority' la plus haute gagne. Le NOM du profil Chrome n'est PAS lisible, donc on identifie le contexte via : le compte (email présent dans le titre Gmail), le domaine et l'URL. La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique.",
+
+  "_cles_de_match": {
+    "title_contains": "sous-chaîne présente dans le titre de la fenêtre (ex: ton email pro, un nom de workspace Slack, un nom de projet)",
+    "domain":         "domaine exact ou sous-domaine de l'onglet Chrome (ex: app.hubspot.com)",
+    "url_contains":   "sous-chaîne présente dans l'URL (ex: /nom-du-client/)",
+    "app":            "sous-chaîne dans le nom de l'app (ex: Code, Slack, Figma)"
+  },
+
+  "rules": [
+    { "project": "MonEntreprise", "priority": 50, "match": { "title_contains": "prenom@monentreprise.com" } },
+    { "project": "Perso",         "priority": 50, "match": { "title_contains": "prenom.perso@gmail.com" } },
+
+    { "project": "MonEntreprise", "priority": 40, "match": { "domain": "app.hubspot.com" } },
+    { "project": "MonEntreprise", "priority": 20, "match": { "app": "Slack", "title_contains": "MonWorkspace" } },
+
+    { "project": "Client Acme",   "priority": 45, "match": { "domain": "acme.com" } },
+    { "project": "Client Acme",   "priority": 45, "match": { "url_contains": "/acme/" } },
+
+    { "project": "Dev",           "priority": 60, "match": { "app": "Code", "title_contains": "mon-repo" } }
+  ],
+
+  "_doc_labels": "Noms lisibles pour la section 'Par onglet / outil' : clé = domaine (ou suffixe), valeur = nom affiché.",
+  "domain_labels": {
+    "mail.google.com": "Gmail",
+    "calendar.google.com": "Agenda",
+    "app.ringover.com": "Ringover",
+    "app.hubspot.com": "HubSpot",
+    "app.pennylane.com": "Pennylane",
+    "app.claap.io": "Claap",
+    "notion.so": "Notion",
+    "linkedin.com": "LinkedIn",
+    "docs.google.com": "Google Docs",
+    "meet.google.com": "Google Meet",
+    "chatgpt.com": "ChatGPT",
+    "claude.ai": "Claude"
+  }
+}
