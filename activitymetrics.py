@@ -447,6 +447,16 @@ def _period_range(args):
     return today, today + timedelta(days=1), _fr_date(today)
 
 
+def _period_slug(args, start):
+    """Slug d'URL du rapport (segment après /activityMetrics/)."""
+    if getattr(args, "week", False):
+        return f"semaine-{start.isoformat()}"
+    if getattr(args, "month", False):
+        return f"{start.year}-{start.month:02d}"
+    # jour précis ou aujourd'hui → date ISO
+    return start.isoformat()
+
+
 def _fetch(start, end):
     conn = db()
     cur = conn.execute(
@@ -463,6 +473,10 @@ def _fetch(start, end):
 
 
 def _fmt_h(seconds):
+    # Temps négligeable (< 1 min) → « - » plutôt que « 0h00 » (évite la
+    # confusion et allège l'affichage).
+    if seconds < 60:
+        return "-"
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     return f"{h}h{m:02d}"
@@ -472,9 +486,12 @@ def _fmt_row(label, secs, pct, width, sub=False):
     """Ligne à colonnes fixes: label pad, temps aligné, puis %.
     Le % d'un groupe (projet) est légèrement à gauche ; celui d'un
     sous-élément (app/onglet) est décalé à droite, tous alignés ensemble —
-    ce qui matérialise la hiérarchie en monospace."""
+    ce qui matérialise la hiérarchie en monospace. Le % est masqué quand le
+    temps est négligeable (« - »)."""
     gap = "    " if sub else " "
-    return f"{label[:width]:<{width}} {_fmt_h(secs):>5}{gap}{round(pct):>3}%"
+    t = _fmt_h(secs)
+    pstr = "    " if t == "-" else f"{round(pct):>3}%"
+    return f"{label[:width]:<{width}} {t:>5}{gap}{pstr}"
 
 
 def _aggregate(rows, cfg, keyfn):
@@ -500,20 +517,26 @@ def _telegram_conf():
     return None
 
 
-def send_telegram(text):
-    """Envoie un message Markdown au bot Telegram configuré."""
+def send_telegram(text, button_url=None, button_text="📄 Voir le détail"):
+    """Envoie un message Markdown au bot Telegram configuré.
+    Si button_url est fourni, ajoute un bouton inline (lien) sous le message."""
     conf = _telegram_conf()
     if not conf:
         print("Telegram non configuré (token/chat_id manquants dans telegram.json).")
         return False
     import urllib.request
     import urllib.parse
-    data = urllib.parse.urlencode({
+    params = {
         "chat_id": conf["chat_id"],
         "text": text,
         "parse_mode": "Markdown",
         "disable_web_page_preview": "true",
-    }).encode()
+    }
+    if button_url:
+        params["reply_markup"] = json.dumps(
+            {"inline_keyboard": [[{"text": button_text, "url": button_url}]]}
+        )
+    data = urllib.parse.urlencode(params).encode()
     url = f"https://api.telegram.org/bot{conf['token']}/sendMessage"
     try:
         with urllib.request.urlopen(url, data=data, timeout=15) as r:
@@ -539,7 +562,7 @@ def _telegram_text(label, total_s, tree):
             body.append(_fmt_row(f"  {app}", a["total"], apct, W))
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
-                if tab == "—":
+                if tab == "—" or s < 60:
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
                 body.append(_fmt_row(f"   - {tab}", s, tpct, W))
@@ -606,56 +629,122 @@ def cmd_report(args):
             print("  " + _fmt_row(f"   {app}", a["total"], apct, W, sub=True))
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
-                if tab == "—":
+                if tab == "—" or s < 60:
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
                 print("  " + _fmt_row(f"     - {tab}", s, tpct, W, sub=True))
         print()
 
+    html_str = _render_html(label, total_s, tree, by_app)
+
     if getattr(args, "html", False):
-        path = _write_html(label, total_s, by_project, by_app, by_profile, by_domain)
+        path = _write_html_local(html_str)
         print(f"  → Rapport HTML : {path}\n")
 
     if getattr(args, "telegram", False):
-        send_telegram(_telegram_text(label, total_s, tree))
+        url = publish_report(html_str, _period_slug(args, start), cfg)
+        send_telegram(_telegram_text(label, total_s, tree), button_url=url)
+        if url:
+            print(f"  → Détail publié : {url}\n")
 
 
-def _write_html(label, total_s, by_project, by_app, by_profile, by_domain):
+def _esc(s):
+    return (str(s) if s is not None else "").replace("&", "&amp;") \
+        .replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_html(label, total_s, tree, by_app):
+    """Rapport HTML complet : arbre projet › app › onglets (le « détail »)."""
+    def pct(part, whole):
+        return f"{round(100 * part / whole)}%" if whole else ""
+
+    blocks = []
+    for proj, node in _sorted_projects(tree):
+        rows = []
+        for app, a in _sorted_apps(node["apps"]):
+            rows.append(
+                f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(a['total'])}</td>"
+                f"<td class='n'>{pct(a['total'], node['total'])}</td></tr>"
+            )
+            for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
+                                 reverse=True):
+                if tab == "—" or s < 60:
+                    continue
+                rows.append(
+                    f"<tr class='sub'><td>↳ {_esc(tab)}</td>"
+                    f"<td class='n'>{_fmt_h(s)}</td>"
+                    f"<td class='n'>{pct(s, a['total'])}</td></tr>"
+                )
+        blocks.append(
+            f"<h2>▸ {_esc(proj)} <span class='pt'>{_fmt_h(node['total'])} · "
+            f"{pct(node['total'], total_s)}</span></h2>"
+            f"<table>{''.join(rows)}</table>"
+        )
+
+    apps_rows = "".join(
+        f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td></tr>"
+        for app, s in by_app[:12] if s >= 60
+    )
+
+    return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ActivityMetrics — {_esc(label)}</title>
+<style>
+ body{{font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
+ h1{{font-size:1.4rem;margin-bottom:.2rem}}
+ h2{{font-size:1.05rem;margin-top:1.8rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
+ .pt{{font-size:.9rem;font-weight:600;color:#3f37c9}}
+ .total{{font-size:2rem;font-weight:700;color:#3f37c9;margin:.2rem 0 0}}
+ table{{width:100%;border-collapse:collapse;margin-top:.3rem}}
+ td{{padding:.35rem .2rem;border-bottom:1px solid #ececf5}}
+ tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
+ .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
+ small{{color:#6b6b80}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total{{color:#8b83ff}}}}
+</style></head><body>
+<h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
+<p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
+{''.join(blocks)}
+<h2>Par application (global)</h2><table>{apps_rows}</table>
+</body></html>"""
+
+
+def _write_html_local(html_str):
     os.makedirs(REPORTS_DIR, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     path = os.path.join(REPORTS_DIR, f"report-{stamp}.html")
-
-    def rows_html(items, total=None):
-        out = []
-        for name, s in items:
-            pct = f"{100*s/total:.0f}%" if total else ""
-            out.append(
-                f"<tr><td>{name}</td><td class='n'>{_fmt_h(s)}</td>"
-                f"<td class='n'>{pct}</td></tr>"
-            )
-        return "\n".join(out)
-
-    html = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ActivityMetrics — {label}</title>
-<style>
- body{{font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
- h1{{font-size:1.4rem}} h2{{font-size:1rem;margin-top:2rem;color:#4b4b6b}}
- .total{{font-size:2rem;font-weight:700;color:#3f37c9}}
- table{{width:100%;border-collapse:collapse;margin-top:.5rem}}
- td{{padding:.4rem .2rem;border-bottom:1px solid #ececf5}}
- .n{{text-align:right;font-variant-numeric:tabular-nums}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}td{{border-color:#2a2a3a}}h2{{color:#a0a0c0}}.total{{color:#8b83ff}}}}
-</style></head><body>
-<h1>📊 ActivityMetrics<br><small>{label}</small></h1>
-<p class="total">{_fmt_h(total_s)}</p><p>de temps actif</p>
-<h2>Par projet</h2><table>{rows_html(by_project, total_s)}</table>
-<h2>Par application</h2><table>{rows_html(by_app[:10])}</table>
-<h2>Par onglet / outil</h2><table>{rows_html(by_domain[:15])}</table>
-</body></html>"""
     with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(html_str)
     return path
+
+
+def publish_report(html_str, slug, cfg):
+    """Publie le rapport HTML sur le VPS via scp et renvoie l'URL publique.
+    Config dans clients.json > 'publish' (ssh_target, remote_dir, base_url,
+    ssh_key). Sans config, ne publie pas (renvoie None)."""
+    pub = cfg.get("publish") or {}
+    target = pub.get("ssh_target")
+    remote = (pub.get("remote_dir") or "").rstrip("/")
+    base = (pub.get("base_url") or "").rstrip("/")
+    if not (target and remote and base):
+        return None
+    key = os.path.expanduser(pub.get("ssh_key", "~/.ssh/id_ed25519"))
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    local = os.path.join(REPORTS_DIR, f"{slug}.html")
+    with open(local, "w", encoding="utf-8") as f:
+        f.write(html_str)
+    opts = ["-i", key, "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+    rdir = f"{remote}/{slug}"
+    try:
+        subprocess.run(["ssh", *opts, target, f"mkdir -p '{rdir}'"],
+                       check=True, timeout=30, capture_output=True)
+        subprocess.run(["scp", *opts, local, f"{target}:{rdir}/index.html"],
+                       check=True, timeout=30, capture_output=True)
+    except Exception as e:
+        print("Publication VPS échouée:", e)
+        return None
+    return f"{base}/{slug}"
 
 
 def cmd_status(args):

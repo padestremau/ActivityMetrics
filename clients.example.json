@@ -5,6 +5,14 @@
   "idle_threshold_seconds": 120,
   "default_project": "Perso",
 
+  "_doc_publish": "OPTIONNEL. Publie le rapport HTML detaille sur ton serveur (via scp) et ajoute un bouton 'Voir le detail' sous le message Telegram. Retire ce bloc pour desactiver. L'URL finale = base_url/<date>.",
+  "publish": {
+    "ssh_target": "utilisateur@mon-serveur.com",
+    "remote_dir": "/var/www/monsite/activityMetrics",
+    "base_url": "https://monsite.com/activityMetrics",
+    "ssh_key": "~/.ssh/id_ed25519"
+  },
+
   "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUTES les clés de 'match' correspondent ; la 'priority' la plus haute gagne. Le NOM du profil Chrome n'est PAS lisible, donc on identifie le contexte via : le compte (email présent dans le titre Gmail), le domaine et l'URL. La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique.",
 
   "_cles_de_match": {
