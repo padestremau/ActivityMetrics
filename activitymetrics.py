@@ -744,7 +744,75 @@ def publish_report(html_str, slug, cfg):
     except Exception as e:
         print("Publication VPS échouée:", e)
         return None
+    _publish_index(cfg, opts, target, remote, base)
     return f"{base}/{slug}"
+
+
+def _index_label(slug):
+    """(catégorie, libellé lisible) d'un slug de rapport."""
+    import re as _re
+    if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", slug):
+        d = datetime.strptime(slug, "%Y-%m-%d").date()
+        return "Jours", _fr_date(d), d.isoformat()
+    m = _re.fullmatch(r"semaine-(\d{4}-\d{2}-\d{2})", slug)
+    if m:
+        d = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        return "Semaines", f"Semaine du {_fr_date(d)}", d.isoformat()
+    if _re.fullmatch(r"\d{4}-\d{2}", slug):
+        d = datetime.strptime(slug, "%Y-%m").date()
+        return "Mois", f"{_FR_MOIS[d.month - 1].capitalize()} {d.year}", slug
+    return "Autres", slug, slug
+
+
+def _render_index(slugs):
+    groups = {"Jours": [], "Semaines": [], "Mois": [], "Autres": []}
+    for s in slugs:
+        cat, lbl, sortkey = _index_label(s)
+        groups[cat].append((sortkey, lbl, s))
+    sections = []
+    for cat in ("Jours", "Semaines", "Mois", "Autres"):
+        items = sorted(groups[cat], reverse=True)
+        if not items:
+            continue
+        links = "".join(
+            f"<li><a href='/activityMetrics/{_esc(s)}'>{_esc(lbl)}</a></li>"
+            for _, lbl, s in items
+        )
+        sections.append(f"<h2>{cat}</h2><ul>{links}</ul>")
+    return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ActivityMetrics — rapports</title>
+<style>
+ body{{font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
+ h1{{font-size:1.4rem}}
+ h2{{font-size:1rem;color:#3f37c9;margin-top:1.8rem;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
+ ul{{list-style:none;padding:0;margin:.4rem 0}}
+ li{{padding:.35rem 0;border-bottom:1px solid #ececf5}}
+ a{{color:inherit;text-decoration:none;font-weight:600}}
+ a:hover{{color:#3f37c9}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#8b83ff;border-color:#8b83ff}}li{{border-color:#2a2a3a}}a:hover{{color:#8b83ff}}}}
+</style></head><body>
+<h1>📊 ActivityMetrics</h1><p>Tous les rapports de suivi du temps.</p>
+{''.join(sections) or '<p>Aucun rapport pour l’instant.</p>'}
+</body></html>"""
+
+
+def _publish_index(cfg, opts, target, remote, base):
+    """Régénère la page index (liste de tous les rapports) sur le VPS."""
+    try:
+        r = subprocess.run(
+            ["ssh", *opts, target, f"cd '{remote}' && ls -1d */ 2>/dev/null"],
+            check=True, timeout=30, capture_output=True, text=True,
+        )
+        slugs = [l.strip().rstrip("/") for l in r.stdout.splitlines() if l.strip()]
+        html = _render_index(slugs)
+        local = os.path.join(REPORTS_DIR, "index.html")
+        with open(local, "w", encoding="utf-8") as f:
+            f.write(html)
+        subprocess.run(["scp", *opts, local, f"{target}:{remote}/index.html"],
+                       check=True, timeout=30, capture_output=True)
+    except Exception as e:
+        print("Index: mise à jour échouée:", e)
 
 
 def cmd_status(args):
