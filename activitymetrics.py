@@ -805,21 +805,21 @@ def _gate_assets(gate_hash):
     if not gate_hash:
         return "", "", ""
     style = (
-        " #am-gate{position:fixed;inset:0;z-index:999;background:#fff;"
+        " #am-gate{position:fixed;inset:0;z-index:999;background:#FCFCFA;"
         "display:flex;align-items:center;justify-content:center;padding:24px}"
         " #am-gate.hide{display:none}"
         " .am-card{max-width:340px;width:100%;text-align:center;color:#1a1a2e;"
-        "font:16px/1.5 -apple-system,system-ui,sans-serif}"
+        "font:16px/1.5 'Hanken Grotesk',-apple-system,system-ui,sans-serif}"
         " .am-card h1{font-size:1.5rem;margin:0 0 .3rem}"
         " .am-card p{color:#6b6b80;font-size:.9rem;margin:0 0 1.2rem}"
         " .am-card input{width:100%;box-sizing:border-box;padding:.7rem .9rem;"
         "border-radius:10px;border:1px solid #e0e0ea;background:#fff;"
         "color:#1a1a2e;font-size:1rem;text-align:center}"
-        " .am-card input:focus{outline:none;border-color:#8b83ff}"
+        " .am-card input:focus{outline:none;border-color:#FF8A4C}"
         " .am-card button{width:100%;margin-top:.7rem;padding:.7rem .9rem;"
-        "border:none;border-radius:10px;background:#3f37c9;color:#fff;"
+        "border:none;border-radius:10px;background:#FF5A2C;color:#fff;"
         "font-size:1rem;font-weight:700;cursor:pointer}"
-        " .am-card button:hover{background:#8b83ff}"
+        " .am-card button:hover{background:#FF8A4C}"
         " .am-err{color:#e5484d;font-size:.85rem;min-height:1.1rem;margin-top:.6rem}"
         " #am-app{display:none} #am-app.show{display:block}"
     )
@@ -1057,13 +1057,14 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ActivityMetrics — {_esc(label)}</title>
 <style>
+ @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&display=swap');
  :root{{color-scheme:light}}
- body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}}
+ body{{font:16px/1.5 'Hanken Grotesk',-apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#FCFCFA}}
  .am-wrap{{display:flex;gap:2.2rem;max-width:1140px;margin:40px auto;padding:0 20px}}
  .am-main{{flex:1;min-width:0;max-width:760px}}
  #am-side{{width:320px;flex-shrink:0;position:sticky;top:24px;align-self:flex-start}}
  #am-side .am-home{{display:block;font-weight:700;margin-bottom:.7rem;color:inherit;text-decoration:none;font-size:.88rem}}
- #am-side .am-home:hover{{color:#3f37c9}}
+ #am-side .am-home:hover{{color:#FF5A2C}}
  #am-side .am-grid{{gap:6px}}
  #am-side .am-bilan{{font-size:.9rem;padding:.7rem .8rem;border-radius:11px}}
  #am-side #mlabel{{font-size:1.05rem}}
@@ -1075,29 +1076,29 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  @media(max-width:720px){{
   .am-wrap{{flex-direction:column;gap:1rem;margin:20px auto;padding:0 16px}}
   .am-main{{max-width:none}}
-  #am-burger{{display:inline-flex;align-items:center;gap:.3rem;position:fixed;top:10px;left:10px;z-index:60;padding:.4rem .7rem;border:1px solid #3f37c9;border-radius:10px;background:#fff;color:#3f37c9;font-weight:700;font-size:.8rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+  #am-burger{{display:inline-flex;align-items:center;gap:.3rem;position:fixed;top:10px;left:10px;z-index:60;padding:.4rem .7rem;border:1px solid #FF5A2C;border-radius:10px;background:#fff;color:#FF5A2C;font-weight:700;font-size:.8rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
   #am-side{{position:static;width:auto;order:-1;display:none;margin-top:2.8rem}}
   #am-side.open{{display:block}}
   #am-recon-btn{{top:10px;right:10px;padding:.4rem .7rem;font-size:.78rem}}
   .total{{font-size:1.7rem}}
  }}
  h1{{font-size:1.4rem;margin-bottom:.2rem}}
- h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
+ h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #FF5A2C;padding-bottom:.2rem}}
  h2,details{{margin-top:1.8rem}}
  summary{{cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}}
  summary::-webkit-details-marker{{display:none}}
- .chev{{display:inline-block;transition:transform .15s;font-size:.8em;color:#3f37c9}}
+ .chev{{display:inline-block;transition:transform .15s;font-size:.8em;color:#FF5A2C}}
  details[open] summary .chev{{transform:rotate(90deg)}}
- .pt{{font-size:.9rem;font-weight:600;color:#3f37c9}}
- .total{{font-size:2rem;font-weight:700;color:#3f37c9;margin:.2rem 0 0}}
+ .pt{{font-size:.9rem;font-weight:600;color:#FF5A2C}}
+ .total{{font-size:2rem;font-weight:700;color:#FF5A2C;margin:.2rem 0 0}}
  table{{width:100%;border-collapse:collapse;margin-top:.3rem}}
  td{{padding:.35rem .2rem;border-bottom:1px solid #ececf5}}
  tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
- #am-recon-btn{{position:fixed;top:16px;right:16px;z-index:60;padding:.5rem .85rem;border:1px solid #3f37c9;border-radius:999px;background:#fff;color:#3f37c9;font-size:.85rem;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+ #am-recon-btn{{position:fixed;top:16px;right:16px;z-index:60;padding:.5rem .85rem;border:1px solid #FF5A2C;border-radius:999px;background:#fff;color:#FF5A2C;font-size:.85rem;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
  #am-recon-btn b{{font-weight:800}}
- #am-recon-btn:hover{{background:#3f37c9;color:#fff}}
+ #am-recon-btn:hover{{background:#FF5A2C;color:#fff}}
  .am-modal{{position:fixed;inset:0;z-index:200;background:rgba(20,20,31,.55);display:flex;align-items:center;justify-content:center;padding:20px}}
  .am-modal.hide{{display:none}}
  .am-modal-card{{position:relative;background:#fff;color:#1a1a2e;max-width:440px;width:100%;border-radius:14px;padding:24px;box-shadow:0 12px 48px rgba(0,0,0,.35)}}
@@ -1303,30 +1304,30 @@ def _index_label(slug):
 _CAL_CSS = """
  .am-cal{text-align:center}
  .am-cal-head{display:flex;align-items:center;justify-content:center;gap:.5rem;margin:.4rem 0}
- .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:40px;height:40px;font-size:1rem;cursor:pointer;color:#3f37c9;flex-shrink:0}
+ .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:40px;height:40px;font-size:1rem;cursor:pointer;color:#FF5A2C;flex-shrink:0}
  .am-cal-head button:hover{background:#f2f2fb}
  #mlabel{font-size:1.1rem;font-weight:700;text-transform:capitalize;flex:1}
  .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
  .am-wd{font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#8a8aa0;font-weight:700}
- .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:9px;color:#c4c4d0;background:#f5f5fa}
+ .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:9px;color:#CFC8BC;background:#F2EEE6}
  .am-cell .d{font-size:1.25rem;font-weight:700;line-height:1}
  .am-cell .hh{font-size:.58rem;font-weight:600;line-height:1;opacity:.95;margin-top:.35rem}
  .am-cell.am-empty{background:none}
- a.am-cell.am-has{text-decoration:none;color:#fff}
- a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#fff}
+ a.am-cell.am-has{text-decoration:none;color:#7A2E12}
+ a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#7A2E12}
  a.am-cell.am-has:hover{filter:brightness(1.08)}
  .am-cell.am-today{outline:2px solid #1a1a2e;outline-offset:-2px}
- .am-cell.am-cur{outline:3px solid #3f37c9;outline-offset:-3px}
+ .am-cell.am-cur{outline:3px solid #FF5A2C;outline-offset:-3px}
  .am-legend{display:flex;align-items:center;justify-content:center;gap:.4rem;font-size:.66rem;color:#8a8aa0;margin:.7rem 0 0}
  .am-legend i{width:14px;height:14px;border-radius:4px;display:inline-block}
  .am-bilans{display:flex;flex-direction:column;gap:9px;margin:1.2rem 0 0}
- .am-bilan{display:block;padding:.9rem 1.1rem;border-radius:13px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:800;font-size:1.05rem}
+ .am-bilan{display:block;padding:.9rem 1.1rem;border-radius:13px;background:#FF5A2C;color:#fff;text-decoration:none;font-weight:800;font-size:1.05rem}
  .am-bilan.year{background:#1a1a2e}
  .am-bilan:hover{filter:brightness(1.12)}
  .am-bilan.off{background:#d8d8e2;color:#9a9aab;pointer-events:none}
  #weeks{margin-top:1.1rem;text-align:left}
  #weeks h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
- #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#3f37c9;text-decoration:none;font-weight:600}
+ #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#FF5A2C;text-decoration:none;font-weight:600}
 """
 
 _CAL_MARKUP = (
@@ -1335,9 +1336,9 @@ _CAL_MARKUP = (
     "<div id='mlabel'></div>"
     "<button id='next' aria-label='Mois suivant'>▶</button></div>"
     "<div class='am-grid' id='grid'></div>"
-    "<div class='am-legend'>Peu <i style='background:hsl(140,62%,44%)'></i>"
-    "<i style='background:hsl(90,62%,44%)'></i><i style='background:hsl(45,80%,50%)'></i>"
-    "<i style='background:hsl(20,80%,50%)'></i><i style='background:hsl(0,72%,48%)'></i> Beaucoup</div>"
+    "<div class='am-legend'>Peu <i style='background:hsl(33,78%,88%)'></i>"
+    "<i style='background:hsl(28,84%,80%)'></i><i style='background:hsl(22,90%,72%)'></i>"
+    "<i style='background:hsl(17,94%,64%)'></i><i style='background:hsl(13,96%,56%)'></i> Beaucoup</div>"
     "<div class='am-bilans'>"
     "<a id='mbtn' class='am-bilan off'>Bilan du mois</a>"
     "<a id='ybtn' class='am-bilan year off'>Bilan de l'année</a>"
@@ -1352,7 +1353,7 @@ _CAL_JS = """
  var now=new Date();
  function pad(n){return(n<10?'0':'')+n;}
  function hlabel(v){return(''+v).replace('.',',')+'h';}
- function heat(h){var f=Math.max(0,Math.min(1,(h-2)/9));var hue=140-f*140;var s=f<0.4?58:76,l=f<0.4?45:47;return 'hsl('+Math.round(hue)+','+s+'%,'+l+'%)';}
+ function heat(h){var f=Math.max(0,Math.min(1,(h-2)/9));var hue=Math.round(33-f*20);var s=Math.round(78+f*18);var l=Math.round(88-f*32);return 'hsl('+hue+','+s+'%,'+l+'%)';}
  var today=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
  var latest=Object.keys(DAYS).sort().pop();
  var y,m;
@@ -1432,13 +1433,14 @@ def _worked_day_hours(cfg):
 
 
 _INDEX_BODY_CSS = """
+ @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&display=swap');
  *{box-sizing:border-box}
  :root{color-scheme:light}
- body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
+ body{font:16px/1.6 'Hanken Grotesk',-apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#FCFCFA}
  .am-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid #ececf5}
  .am-tabs a{padding:.7rem 1.1rem;color:#6b6b80;text-decoration:none;font-weight:600;font-size:.9rem;border-bottom:2px solid transparent}
- .am-tabs a.on{color:#3f37c9;border-bottom-color:#3f37c9}
- .am-tabs a:hover{color:#3f37c9}
+ .am-tabs a.on{color:#FF5A2C;border-bottom-color:#FF5A2C}
+ .am-tabs a:hover{color:#FF5A2C}
  .am-page{max-width:600px;margin:24px auto;padding:0 20px}
  h1{font-size:1.4rem;margin:.2rem 0;text-align:center}
  .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.1rem;text-align:center}
