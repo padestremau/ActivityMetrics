@@ -1310,13 +1310,13 @@ _CAL_CSS = """
  .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
  .am-wd{font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#8a8aa0;font-weight:700}
  .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:9px;color:#CFC8BC;background:#F2EEE6}
- .am-cell .d{font-size:1.25rem;font-weight:700;line-height:1}
- .am-cell .hh{font-size:.58rem;font-weight:600;line-height:1;opacity:.95;margin-top:.35rem}
+ .am-cell .d{font-size:1.25rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+ .am-cell .hh{font-size:.87rem;font-weight:700;line-height:1;opacity:.96;margin-top:.55rem;font-variant-numeric:tabular-nums}
  .am-cell.am-empty{background:none}
- a.am-cell.am-has{text-decoration:none;color:#7A2E12}
- a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#7A2E12}
- a.am-cell.am-has:hover{filter:brightness(1.08)}
- .am-cell.am-today{outline:2px solid #1a1a2e;outline-offset:-2px}
+ a.am-cell.am-has{text-decoration:none;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.28)}
+ a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#fff}
+ a.am-cell.am-has:hover{filter:brightness(1.06)}
+ .am-cell.am-today{outline:3px solid #2563EB;outline-offset:-3px}
  .am-cell.am-cur{outline:3px solid #FF5A2C;outline-offset:-3px}
  .am-legend{display:flex;align-items:center;justify-content:center;gap:.4rem;font-size:.66rem;color:#8a8aa0;margin:.7rem 0 0}
  .am-legend i{width:14px;height:14px;border-radius:4px;display:inline-block}
@@ -1336,9 +1336,9 @@ _CAL_MARKUP = (
     "<div id='mlabel'></div>"
     "<button id='next' aria-label='Mois suivant'>▶</button></div>"
     "<div class='am-grid' id='grid'></div>"
-    "<div class='am-legend'>Peu <i style='background:hsl(33,78%,88%)'></i>"
-    "<i style='background:hsl(28,84%,80%)'></i><i style='background:hsl(22,90%,72%)'></i>"
-    "<i style='background:hsl(17,94%,64%)'></i><i style='background:hsl(13,96%,56%)'></i> Beaucoup</div>"
+    "<div class='am-legend'>Peu <i style='background:hsl(33,84%,64%)'></i>"
+    "<i style='background:hsl(28,88%,58%)'></i><i style='background:hsl(22,92%,52%)'></i>"
+    "<i style='background:hsl(16,94%,46%)'></i><i style='background:hsl(12,96%,40%)'></i> Beaucoup</div>"
     "<div class='am-bilans'>"
     "<a id='mbtn' class='am-bilan off'>Bilan du mois</a>"
     "<a id='ybtn' class='am-bilan year off'>Bilan de l'année</a>"
@@ -1353,7 +1353,7 @@ _CAL_JS = """
  var now=new Date();
  function pad(n){return(n<10?'0':'')+n;}
  function hlabel(v){return(''+v).replace('.',',')+'h';}
- function heat(h){var f=Math.max(0,Math.min(1,(h-2)/9));var hue=Math.round(33-f*20);var s=Math.round(78+f*18);var l=Math.round(88-f*32);return 'hsl('+hue+','+s+'%,'+l+'%)';}
+ function heat(h){var f=Math.max(0,Math.min(1,(h-2)/9));var hue=Math.round(33-f*21);var s=Math.round(84+f*12);var l=Math.round(64-f*24);return 'hsl('+hue+','+s+'%,'+l+'%)';}
  var today=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
  var latest=Object.keys(DAYS).sort().pop();
  var y,m;
