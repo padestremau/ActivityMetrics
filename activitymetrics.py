@@ -504,6 +504,7 @@ def _send_period(cfg, start, end, label, slug):
     html = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
                         nav, slug, recon, _worked_day_hours(cfg))
     url = publish_report(html, slug, cfg)
+    publish_activity_json(cfg)
     send_telegram(_telegram_text(label, total_s, tree, recon), button_url=url)
     return url
 
@@ -768,6 +769,7 @@ def cmd_report(args):
     if getattr(args, "telegram", False):
         # Publication silencieuse (pas une notif) : maintenue même le week-end.
         url = publish_report(html_str, cur_slug, cfg)
+        publish_activity_json(cfg)
         force = getattr(args, "force", False)
         if _is_weekend() and not force:
             print("  → Week-end : notification Telegram supprimée "
@@ -1055,7 +1057,8 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ActivityMetrics — {_esc(label)}</title>
 <style>
- body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e}}
+ :root{{color-scheme:light}}
+ body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}}
  .am-wrap{{display:flex;gap:2.2rem;max-width:1140px;margin:40px auto;padding:0 20px}}
  .am-main{{flex:1;min-width:0;max-width:760px}}
  #am-side{{width:320px;flex-shrink:0;position:sticky;top:24px;align-self:flex-start}}
@@ -1100,7 +1103,6 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  .am-modal-card{{position:relative;background:#fff;color:#1a1a2e;max-width:440px;width:100%;border-radius:14px;padding:24px;box-shadow:0 12px 48px rgba(0,0,0,.35)}}
  .am-modal-x{{position:absolute;top:8px;right:14px;border:0;background:none;font-size:1.7rem;line-height:1;color:#8a8aa0;cursor:pointer}}
  .am-modal-h{{border:0;display:block;margin:0 0 .6rem;font-size:1.15rem;font-weight:700}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side .am-home:hover{{color:#8b83ff}}#am-recon-btn,#am-burger{{background:#1c1c28;color:#8b83ff;border-color:#8b83ff}}#am-recon-btn:hover{{background:#8b83ff;color:#14141f}}.am-modal-card{{background:#1c1c28;color:#e8e8f0}}}}
 {cal_css}
 {gstyle}
 </style></head><body>
@@ -1163,6 +1165,122 @@ def publish_report(html_str, slug, cfg):
     return f"{base}/{slug}"
 
 
+def build_activity_json(cfg, days_back=240):
+    """Snapshot JSON de l'activité (secondes par jour et par projet) destiné à
+    une consommation externe — p.ex. la vue native dans Timesheet. Les données
+    brutes sont reclassées à l'export via clients.json (comme les rapports)."""
+    ss = cfg.get("sample_seconds", 20)
+    tcfg = cfg.get("timesheet") or {}
+    since = int(time.mktime(
+        (datetime.now() - timedelta(days=days_back)).timetuple()))
+    conn = db()
+    cur = conn.execute(
+        "SELECT ts, app, profile, domain, url, title FROM samples "
+        "WHERE idle = 0 AND ts >= ?", (since,))
+    days = {}
+    for (tsx, a, p, d, u, t) in cur.fetchall():
+        rec = {"app": a, "profile": p, "domain": d, "url": u, "title": t}
+        day = time.strftime("%Y-%m-%d", time.localtime(tsx))
+        proj = classify(rec, cfg)
+        e = days.setdefault(day, {"seconds": 0, "by_project": {}})
+        e["seconds"] += ss
+        e["by_project"][proj] = e["by_project"].get(proj, 0) + ss
+    conn.close()
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "sample_seconds": ss,
+        "thresholds": {
+            "full_hours": tcfg.get("hours_full_day", 5),
+            "half_hours": tcfg.get("hours_half_day", 2),
+        },
+        "days": days,
+    }
+
+
+def publish_activity_json(cfg):
+    """Publie le snapshot JSON d'activité sur le VPS (à côté des rapports HTML)
+    pour que Timesheet l'affiche nativement. No-op sans config `publish`."""
+    pub = cfg.get("publish") or {}
+    target = pub.get("ssh_target")
+    remote = (pub.get("remote_dir") or "").rstrip("/")
+    if not (target and remote):
+        return None
+    key = os.path.expanduser(pub.get("ssh_key", "~/.ssh/id_ed25519"))
+    opts = ["-i", key, "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    local = os.path.join(REPORTS_DIR, "activity.json")
+    with open(local, "w", encoding="utf-8") as f:
+        json.dump(build_activity_json(cfg), f, ensure_ascii=False)
+    try:
+        subprocess.run(["scp", *opts, local, f"{target}:{remote}/activity.json"],
+                       check=True, timeout=30, capture_output=True)
+    except Exception as e:
+        print("Publication activity.json échouée:", e)
+        return None
+    return f"{remote}/activity.json"
+
+
+def _slug_to_range(slug):
+    """(start, end, label) d'un slug de rapport, ou None si non reconnu."""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", slug):
+        d = datetime.strptime(slug, "%Y-%m-%d")
+        return d, d + timedelta(days=1), _fr_date(d.date())
+    m = re.fullmatch(r"semaine-(\d{4}-\d{2}-\d{2})", slug)
+    if m:
+        d = datetime.strptime(m.group(1), "%Y-%m-%d")
+        return d, d + timedelta(days=7), f"Semaine du {_fr_date(d.date())}"
+    if re.fullmatch(r"\d{4}-\d{2}", slug):
+        d = datetime.strptime(slug + "-01", "%Y-%m-%d")
+        nm = datetime(d.year + d.month // 12, d.month % 12 + 1, 1)
+        return d, nm, f"{_FR_MOIS[d.month - 1].capitalize()} {d.year}"
+    if re.fullmatch(r"\d{4}", slug):
+        y = int(slug)
+        return datetime(y, 1, 1), datetime(y + 1, 1, 1), f"Année {y}"
+    return None
+
+
+def cmd_republish(args):
+    """Régénère et republie TOUS les rapports déjà en ligne + l'index avec le
+    code courant (utile après un changement de style/JS). Silencieux (pas de
+    Telegram). Reclassement rétroactif via clients.json au passage."""
+    cfg = load_config()
+    if not cfg.get("publish"):
+        print("Pas de config 'publish' dans clients.json."); return
+    slugs = _list_remote_slugs(cfg)
+    if not slugs:
+        print("Aucun rapport publié à régénérer."); return
+    nav = slugs
+    day_hours = _worked_day_hours(cfg)
+    gate = _gate_hash(cfg)
+    ok = 0
+    for slug in slugs:
+        rng = _slug_to_range(slug)
+        if not rng:
+            print(f"  … {slug} (format inconnu, ignoré)"); continue
+        start, end, label = rng
+        rows = _fetch(start, end)
+        by_app = _aggregate(rows, cfg, lambda r: r.get("app"))
+        total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: classify(r, cfg)))
+        tree = build_tree(rows, cfg)
+        recon = None
+        if cfg.get("timesheet"):
+            ts = fetch_timesheet_days(cfg, start.isoformat(),
+                                      (end - timedelta(days=1)).isoformat())
+            if ts:
+                am = am_day_equivalents(start, end, cfg)
+                recon = {"ts": ts, "am": am,
+                         "gap": round(am["fde"] - ts["total"]["realDays"], 1)}
+        html = _render_html(label, total_s, tree, by_app, gate, nav, slug,
+                            recon, day_hours)
+        if publish_report(html, slug, cfg):
+            ok += 1; print(f"  ✓ {slug}")
+        else:
+            print(f"  ✗ {slug} (échec)")
+    publish_activity_json(cfg)
+    print(f"\nRepublié : {ok}/{len(slugs)} rapports + index + activity.json")
+
+
 def _index_label(slug):
     """(catégorie, libellé lisible) d'un slug de rapport."""
     import re as _re
@@ -1209,13 +1327,6 @@ _CAL_CSS = """
  #weeks{margin-top:1.1rem;text-align:left}
  #weeks h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
  #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#3f37c9;text-decoration:none;font-weight:600}
- @media(prefers-color-scheme:dark){
-  .am-cal-head button{background:#1c1c28;border-color:#2a2a3a;color:#8b83ff}
-  .am-cal-head button:hover{background:#25253a}
-  .am-cell{background:#1c1c28;color:#54546a}
-  .am-cell.am-today{outline-color:#e8e8f0}
-  .am-bilan.year{background:#3a3a52;color:#e8e8f0}.am-bilan.off{background:#2a2a3a;color:#54546a}
-  #weeks a{color:#8b83ff}}
 """
 
 _CAL_MARKUP = (
@@ -1265,6 +1376,22 @@ _CAL_JS = """
  document.getElementById('prev').onclick=function(){if(--m<0){m=11;y--;}render();};
  document.getElementById('next').onclick=function(){if(++m>11){m=0;y++;}render();};
  render();
+ // Source unique : chaque page de rapport est un HTML figé au moment de sa
+ // génération ; sans ça, les heures embarquées (window.AM_DAYS) diffèrent d'une
+ // page à l'autre et le chiffre d'un même jour « bouge » selon la page ouverte.
+ // On recharge donc les heures depuis activity.json (mis à jour à chaque rapport)
+ // pour un calendrier cohérent et à jour partout.
+ fetch('/activityMetrics/activity.json',{credentials:'same-origin'})
+  .then(function(r){return r.ok?r.json():null;})
+  .then(function(j){
+    if(!j||!j.days)return;
+    var half=(j.thresholds&&j.thresholds.half_hours)||2,nd={};
+    Object.keys(j.days).forEach(function(k){
+      var h=Math.round(((j.days[k].seconds||0)/3600)*10)/10;
+      if(h>=half)nd[k]=h;
+    });
+    DAYS=nd;render();
+  }).catch(function(){});
  var w=window.AM_WEEKS||[],we=document.getElementById('weeks');
  if(w.length&&we){var wh='<h3>Semaines</h3>';w.forEach(function(s){wh+='<a href="/activityMetrics/'+s+'">'+s.replace('semaine-','Semaine du ')+'</a>';});we.innerHTML=wh;}
  var bg=document.getElementById('am-burger'),sd=document.getElementById('am-side');
@@ -1306,6 +1433,7 @@ def _worked_day_hours(cfg):
 
 _INDEX_BODY_CSS = """
  *{box-sizing:border-box}
+ :root{color-scheme:light}
  body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
  .am-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid #ececf5}
  .am-tabs a{padding:.7rem 1.1rem;color:#6b6b80;text-decoration:none;font-weight:600;font-size:.9rem;border-bottom:2px solid transparent}
@@ -1317,8 +1445,6 @@ _INDEX_BODY_CSS = """
  .am-page #mlabel{font-size:1.2rem}
  .am-page .am-bilan{font-size:1.15rem;padding:1rem 1.2rem}
  @media(max-width:560px){.am-page{margin:14px auto}}
- @media(prefers-color-scheme:dark){body{background:#14141f;color:#e8e8f0}
-  .am-tabs{border-color:#2a2a3a}.am-tabs a.on{color:#8b83ff;border-bottom-color:#8b83ff}.am-tabs a:hover{color:#8b83ff}}
 """
 
 
@@ -1638,6 +1764,7 @@ def main():
     sub.add_parser("install")
     sub.add_parser("uninstall")
     sub.add_parser("flush")  # rejoue les bilans différés du week-end
+    sub.add_parser("republish")  # régénère + republie tous les rapports + index
     sc = sub.add_parser("schedule")
     sc.add_argument("--off", action="store_true")
     sub.add_parser("setup")
@@ -1651,6 +1778,7 @@ def main():
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "flush": cmd_flush,
+        "republish": cmd_republish,
         "schedule": cmd_schedule,
         "setup": cmd_setup,
         "setup-telegram": cmd_setup_telegram,
