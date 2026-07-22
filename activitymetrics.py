@@ -635,7 +635,7 @@ def cmd_report(args):
                 print("  " + _fmt_row(f"     - {tab}", s, tpct, W, sub=True))
         print()
 
-    html_str = _render_html(label, total_s, tree, by_app)
+    html_str = _render_html(label, total_s, tree, by_app, _gate_hash(cfg))
 
     if getattr(args, "html", False):
         path = _write_html_local(html_str)
@@ -653,7 +653,63 @@ def _esc(s):
         .replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _render_html(label, total_s, tree, by_app):
+def _gate_hash(cfg):
+    return (cfg.get("publish") or {}).get("password_sha256") or None
+
+
+def _gate_assets(gate_hash):
+    """(style, overlay, script) de la modale mot de passe (façon LP admin :
+    champ unique, pas de nom d'utilisateur, pas de popup navigateur).
+    gate_hash absent -> chaînes vides (aucune modale)."""
+    if not gate_hash:
+        return "", "", ""
+    style = (
+        " #am-gate{position:fixed;inset:0;z-index:999;background:#14141f;"
+        "display:flex;align-items:center;justify-content:center;padding:24px}"
+        " #am-gate.hide{display:none}"
+        " .am-card{max-width:340px;width:100%;text-align:center;color:#e8e8f0;"
+        "font:16px/1.5 -apple-system,system-ui,sans-serif}"
+        " .am-card h1{font-size:1.5rem;margin:0 0 .3rem}"
+        " .am-card p{color:#a0a0c0;font-size:.9rem;margin:0 0 1.2rem}"
+        " .am-card input{width:100%;box-sizing:border-box;padding:.7rem .9rem;"
+        "border-radius:10px;border:1px solid #2a2a3a;background:#1c1c28;"
+        "color:#e8e8f0;font-size:1rem;text-align:center}"
+        " .am-card input:focus{outline:none;border-color:#8b83ff}"
+        " .am-card button{width:100%;margin-top:.7rem;padding:.7rem .9rem;"
+        "border:none;border-radius:10px;background:#3f37c9;color:#fff;"
+        "font-size:1rem;font-weight:700;cursor:pointer}"
+        " .am-card button:hover{background:#8b83ff}"
+        " .am-err{color:#e5484d;font-size:.85rem;min-height:1.1rem;margin-top:.6rem}"
+        " #am-app{display:none} #am-app.show{display:block}"
+    )
+    overlay = (
+        '<div id="am-gate"><div class="am-card">'
+        "<h1>📊 ActivityMetrics</h1><p>Accès protégé</p>"
+        '<input id="am-pw" type="password" placeholder="mot de passe" '
+        'autocomplete="off" autofocus>'
+        '<button id="am-go">Accéder</button>'
+        '<div class="am-err" id="am-err"></div></div></div>'
+    )
+    script = (
+        "<script>(function(){var H=\"" + gate_hash + "\";"
+        "var g=document.getElementById('am-gate'),a=document.getElementById('am-app');"
+        "function reveal(){g.classList.add('hide');a.classList.add('show');}"
+        "async function sha(s){var b=await crypto.subtle.digest('SHA-256',"
+        "new TextEncoder().encode(s));return Array.from(new Uint8Array(b))"
+        ".map(function(x){return x.toString(16).padStart(2,'0');}).join('');}"
+        "var i=document.getElementById('am-pw');"
+        "function t(){sha(i.value.trim()).then(function(h){if(h===H){"
+        "try{sessionStorage.setItem('am_ok','1');}catch(e){}reveal();}"
+        "else{document.getElementById('am-err').textContent='Mot de passe incorrect.';i.select();}});}"
+        "i.addEventListener('keydown',function(e){if(e.key==='Enter')t();});"
+        "document.getElementById('am-go').addEventListener('click',t);"
+        "try{if(sessionStorage.getItem('am_ok')==='1'){reveal();}else{i.focus();}}"
+        "catch(e){i.focus();}})();</script>"
+    )
+    return style, overlay, script
+
+
+def _render_html(label, total_s, tree, by_app, gate_hash=None):
     """Rapport HTML complet : arbre projet › app › onglets (le « détail »)."""
     def pct(part, whole):
         return f"{round(100 * part / whole)}%" if whole else ""
@@ -685,6 +741,7 @@ def _render_html(label, total_s, tree, by_app):
         f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td></tr>"
         for app, s in by_app[:12] if s >= 60
     )
+    gstyle, goverlay, gscript = _gate_assets(gate_hash)
 
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -701,11 +758,16 @@ def _render_html(label, total_s, tree, by_app):
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
  @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total{{color:#8b83ff}}}}
+{gstyle}
 </style></head><body>
+{goverlay}
+<div id="am-app">
 <h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
 <p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
 {''.join(blocks)}
 <h2>Par application (global)</h2><table>{apps_rows}</table>
+</div>
+{gscript}
 </body></html>"""
 
 
@@ -764,7 +826,7 @@ def _index_label(slug):
     return "Autres", slug, slug
 
 
-def _render_index(slugs):
+def _render_index(slugs, gate_hash=None):
     groups = {"Jours": [], "Semaines": [], "Mois": [], "Autres": []}
     for s in slugs:
         cat, lbl, sortkey = _index_label(s)
@@ -779,6 +841,7 @@ def _render_index(slugs):
             for _, lbl, s in items
         )
         sections.append(f"<h2>{cat}</h2><ul>{links}</ul>")
+    gstyle, goverlay, gscript = _gate_assets(gate_hash)
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ActivityMetrics — rapports</title>
@@ -791,9 +854,14 @@ def _render_index(slugs):
  a{{color:inherit;text-decoration:none;font-weight:600}}
  a:hover{{color:#3f37c9}}
  @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#8b83ff;border-color:#8b83ff}}li{{border-color:#2a2a3a}}a:hover{{color:#8b83ff}}}}
+{gstyle}
 </style></head><body>
+{goverlay}
+<div id="am-app">
 <h1>📊 ActivityMetrics</h1><p>Tous les rapports de suivi du temps.</p>
 {''.join(sections) or '<p>Aucun rapport pour l’instant.</p>'}
+</div>
+{gscript}
 </body></html>"""
 
 
@@ -805,7 +873,7 @@ def _publish_index(cfg, opts, target, remote, base):
             check=True, timeout=30, capture_output=True, text=True,
         )
         slugs = [l.strip().rstrip("/") for l in r.stdout.splitlines() if l.strip()]
-        html = _render_index(slugs)
+        html = _render_index(slugs, _gate_hash(cfg))
         local = os.path.join(REPORTS_DIR, "index.html")
         with open(local, "w", encoding="utf-8") as f:
             f.write(html)
