@@ -1035,17 +1035,18 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <title>ActivityMetrics — {_esc(label)}</title>
 <style>
  body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e}}
- .am-wrap{{display:flex;gap:2.5rem;max-width:1040px;margin:40px auto;padding:0 20px}}
+ .am-wrap{{display:flex;gap:2.2rem;max-width:1140px;margin:40px auto;padding:0 20px}}
  .am-main{{flex:1;min-width:0;max-width:760px}}
- #am-side{{width:236px;flex-shrink:0;position:sticky;top:24px;align-self:flex-start}}
- #am-side .am-home{{display:block;font-weight:700;margin-bottom:.6rem;color:inherit;text-decoration:none;font-size:.82rem}}
+ #am-side{{width:320px;flex-shrink:0;position:sticky;top:24px;align-self:flex-start}}
+ #am-side .am-home{{display:block;font-weight:700;margin-bottom:.7rem;color:inherit;text-decoration:none;font-size:.88rem}}
  #am-side .am-home:hover{{color:#3f37c9}}
- #am-side .am-bilan{{font-size:.8rem;padding:.55rem .6rem;border-radius:10px}}
- #am-side #mlabel{{font-size:.9rem}}
- #am-side .am-cal-head button{{width:32px;height:32px;font-size:.85rem}}
- #am-side .am-cell .d{{font-size:.95rem}}
- #am-side .am-cell .hh{{font-size:.5rem;margin-top:.15rem}}
- #am-side .am-legend{{font-size:.55rem;gap:.25rem}}
+ #am-side .am-grid{{gap:6px}}
+ #am-side .am-bilan{{font-size:.9rem;padding:.7rem .8rem;border-radius:11px}}
+ #am-side #mlabel{{font-size:1.05rem}}
+ #am-side .am-cal-head button{{width:38px;height:38px;font-size:.95rem}}
+ #am-side .am-cell .d{{font-size:1.2rem}}
+ #am-side .am-cell .hh{{font-size:.58rem;margin-top:.3rem}}
+ #am-side .am-legend{{font-size:.62rem;gap:.35rem}}
  #am-burger{{display:none}}
  @media(max-width:720px){{
   .am-wrap{{flex-direction:column;gap:1rem;margin:20px auto;padding:0 16px}}
