@@ -1019,7 +1019,8 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
         )
 
     apps_rows = "".join(
-        f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td></tr>"
+        f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td>"
+        f"<td class='n'>{pct(s, total_s)}</td></tr>"
         for app, s in by_app[:12] if s >= 60
     )
     recon_btn, recon_overlay, recon_script = _recon_assets(recon)
