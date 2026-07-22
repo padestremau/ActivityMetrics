@@ -179,6 +179,49 @@ def chrome_active_tab():
     return (url or None), (title or None)
 
 
+def chrome_focused_title():
+    """Titre de la fenêtre Chrome RÉELLEMENT active, via AXFocusedWindow.
+    Plus fiable que 'front window' (System Events) qui pointe parfois une
+    fenêtre auxiliaire sans titre : barre de partage Meet, sélecteur de
+    fichier… Nécessite la permission Accessibilité."""
+    out = osa(
+        'tell application "System Events" to tell process "Google Chrome"\n'
+        '  try\n'
+        '    return value of attribute "AXTitle" of '
+        '(value of attribute "AXFocusedWindow")\n'
+        '  end try\n'
+        '  return ""\n'
+        "end tell"
+    )
+    return (out or None) if out else None
+
+
+# Chrome suffixe ses titres par « … - Google Chrome – <prénom> (<profil>) »
+# dès que plusieurs profils existent. Le nom entre parenthèses (= nom du
+# profil dans Local State) identifie le compte de façon fiable, alors que
+# le dictionnaire AppleScript de Chrome ne renvoie plus qu'une fenêtre
+# fantôme « about:blank » depuis Chrome 15x.
+_CHROME_PROFILE_RE = re.compile(r"Google Chrome\s*[–—-]\s*.*\(([^)]+)\)\s*$")
+_CHROME_SUFFIX_RE = re.compile(r"\s*[-–—]\s*Google Chrome\b.*$")
+
+
+def chrome_profile_from_title(title):
+    """Nom du profil Chrome extrait du titre de fenêtre (compte)."""
+    if not title:
+        return None
+    m = _CHROME_PROFILE_RE.search(title)
+    return m.group(1).strip() if m else None
+
+
+def clean_chrome_title(title):
+    """Titre de page seul, sans le suffixe « - Google Chrome – <profil> »
+    (sert de libellé d'onglet à défaut d'URL)."""
+    if not title:
+        return None
+    t = _CHROME_SUFFIX_RE.sub("", title).strip()
+    return t or None
+
+
 def known_profile_names():
     """Noms des profils Chrome déclarés dans Local State."""
     try:
@@ -285,13 +328,27 @@ def cmd_probe(args):
         # titre de fenêtre générique (workspace Slack, projet VS Code, page…)
         title = frontmost_window_title(app)
         if "chrome" in app.lower():
-            # URL via AppleScript Chrome (fiable interactif), sinon omnibox AX
+            # Titre fiable via AXFocusedWindow (le 'front window' peut pointer
+            # une fenêtre auxiliaire sans titre : partage Meet, sélecteur…).
+            ax_title = chrome_focused_title()
+            if ax_title:
+                title = ax_title
+            # URL : depuis Chrome 15x le dictionnaire AppleScript ne renvoie
+            # plus qu'une fenêtre fantôme « about:blank ». On la traite comme
+            # absente et on retombe sur l'omnibox AX.
             u, t = chrome_active_tab()
-            url = u or chrome_url_via_ax()
-            if t:
+            if (u or "").lower() in ("", "about:blank"):
+                u = chrome_url_via_ax()
+            url = u
+            if t and t.lower() not in ("", "about:blank"):
                 title = t
             domain = domain_of(url)
-            profile = chrome_profile(known_profile_names())
+            # Profil (= compte) lu dans le titre — le dictionnaire AppleScript
+            # étant mort, c'est le signal de classification principal.
+            profile = (chrome_profile_from_title(title)
+                       or chrome_profile(known_profile_names()))
+            # Libellé propre pour la section « Par onglet / outil » à défaut d'URL.
+            title = clean_chrome_title(title) or title
 
     conn = db()
     conn.execute(
@@ -502,7 +559,9 @@ def build_tree(rows, cfg):
         a = node["apps"].setdefault(app, {"total": 0, "tabs": {}})
         a["total"] += ss
         if "chrome" in app.lower():
-            tab = label_domain(r.get("domain"), cfg) or "—"
+            # Libellé d'onglet : domaine si dispo, sinon titre de page (l'URL
+            # n'est plus captable via AppleScript sur Chrome 15x).
+            tab = label_domain(r.get("domain"), cfg) or r.get("title") or "—"
             a["tabs"][tab] = a["tabs"].get(tab, 0) + ss
     return tree
 

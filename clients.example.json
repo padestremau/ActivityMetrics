@@ -8,13 +8,17 @@
   "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUTES les clés de 'match' correspondent ; la 'priority' la plus haute gagne. Le NOM du profil Chrome n'est PAS lisible, donc on identifie le contexte via : le compte (email présent dans le titre Gmail), le domaine et l'URL. La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique.",
 
   "_cles_de_match": {
+    "profile":        "nom EXACT du profil Chrome (ex: 'monentreprise.com', 'Perso'). Recommandé pour Chrome : depuis Chrome 15x l'URL n'est plus lisible, mais le profil est extrait du titre de fenêtre ('… - Google Chrome – Prénom (profil)'). Un profil = un compte = un projet.",
     "title_contains": "sous-chaîne présente dans le titre de la fenêtre (ex: ton email pro, un nom de workspace Slack, un nom de projet)",
-    "domain":         "domaine exact ou sous-domaine de l'onglet Chrome (ex: app.hubspot.com)",
-    "url_contains":   "sous-chaîne présente dans l'URL (ex: /nom-du-client/)",
+    "domain":         "domaine exact ou sous-domaine de l'onglet Chrome (ex: app.hubspot.com) — non captable sur Chrome 15x",
+    "url_contains":   "sous-chaîne présente dans l'URL (ex: /nom-du-client/) — non captable sur Chrome 15x",
     "app":            "sous-chaîne dans le nom de l'app (ex: Code, Slack, Figma)"
   },
 
   "rules": [
+    { "project": "MonEntreprise", "priority": 55, "match": { "profile": "monentreprise.com" } },
+    { "project": "Perso",         "priority": 55, "match": { "profile": "Perso" } },
+
     { "project": "MonEntreprise", "priority": 50, "match": { "title_contains": "prenom@monentreprise.com" } },
     { "project": "Perso",         "priority": 50, "match": { "title_contains": "prenom.perso@gmail.com" } },
 
