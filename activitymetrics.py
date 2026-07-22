@@ -653,12 +653,18 @@ def _telegram_text(label, total_s, tree, recon=None):
         for app, a in _sorted_apps(node["apps"]):
             apct = (100 * a["total"] / node["total"]) if node["total"] else 0
             body.append(_fmt_row(f"  {app}", a["total"], apct, W))
+            hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
                 if tab == "—" or s < 60:
+                    hidden += s
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
                 body.append(_fmt_row(f"   - {tab}", s, tpct, W))
+            if hidden >= 60:
+                hpct = (100 * hidden / a["total"]) if a["total"] else 0
+                body.append(_fmt_row("   - Autres (non détaillés)",
+                                     hidden, hpct, W))
         body.append("")
     return head + "\n```\n" + "\n".join(body).rstrip() + "\n```"
 
@@ -720,12 +726,18 @@ def cmd_report(args):
         for app, a in _sorted_apps(node["apps"]):
             apct = (100 * a["total"] / node["total"]) if node["total"] else 0
             print("  " + _fmt_row(f"   {app}", a["total"], apct, W, sub=True))
+            hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
                 if tab == "—" or s < 60:
+                    hidden += s
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
                 print("  " + _fmt_row(f"     - {tab}", s, tpct, W, sub=True))
+            if hidden >= 60:
+                hpct = (100 * hidden / a["total"]) if a["total"] else 0
+                print("  " + _fmt_row("     - Autres (non détaillés)",
+                                      hidden, hpct, W, sub=True))
         print()
 
     cur_slug = _period_slug(args, start)
@@ -1001,14 +1013,23 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
                 f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(a['total'])}</td>"
                 f"<td class='n'>{pct(a['total'], node['total'])}</td></tr>"
             )
+            hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
                 if tab == "—" or s < 60:
+                    hidden += s
                     continue
                 rows.append(
                     f"<tr class='sub'><td>↳ {_esc(tab)}</td>"
                     f"<td class='n'>{_fmt_h(s)}</td>"
                     f"<td class='n'>{pct(s, a['total'])}</td></tr>"
+                )
+            if hidden >= 60:
+                rows.append(
+                    "<tr class='sub'><td>↳ <em>Autres onglets "
+                    "(&lt; 1 min ou sans titre)</em></td>"
+                    f"<td class='n'>{_fmt_h(hidden)}</td>"
+                    f"<td class='n'>{pct(hidden, a['total'])}</td></tr>"
                 )
         blocks.append(
             f"<details><summary><span class='lbl'>"
