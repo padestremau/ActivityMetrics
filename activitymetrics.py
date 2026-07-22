@@ -502,7 +502,7 @@ def _send_period(cfg, start, end, label, slug):
             recon = {"ts": ts, "am": am,
                      "gap": round(am["fde"] - ts["total"]["realDays"], 1)}
     html = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
-                        nav, slug, recon)
+                        nav, slug, recon, _worked_day_hours(cfg))
     url = publish_report(html, slug, cfg)
     send_telegram(_telegram_text(label, total_s, tree, recon), button_url=url)
     return url
@@ -745,8 +745,9 @@ def cmd_report(args):
             am = am_day_equivalents(start, end, cfg)
             recon = {"ts": ts, "am": am,
                      "gap": round(am["fde"] - ts["total"]["realDays"], 1)}
+    day_hours = _worked_day_hours(cfg) if nav else None
     html_str = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
-                            nav, cur_slug, recon)
+                            nav, cur_slug, recon, day_hours)
 
     if getattr(args, "html", False):
         path = _write_html_local(html_str)
@@ -836,27 +837,16 @@ def _gate_assets(gate_hash):
 
 
 def _nav_html(nav, current):
-    """Menu latéral gauche : liens vers les derniers rapports."""
+    """Menu latéral gauche des rapports = calendrier (+ burger en mobile)."""
     if not nav:
         return ""
-    groups = {"Jours": [], "Semaines": [], "Mois": [], "Années": [], "Autres": []}
-    for s in nav:
-        cat, lbl, sk = _index_label(s)
-        groups[cat].append((sk, lbl, s))
-    secs = []
-    for cat in ("Jours", "Semaines", "Mois", "Années", "Autres"):
-        items = sorted(groups[cat], reverse=True)[:8]
-        if not items:
-            continue
-        links = "".join(
-            f"<a class='{'cur' if s == current else ''}' "
-            f"href='/activityMetrics/{_esc(s)}'>{_esc(lbl)}</a>"
-            for _, lbl, s in items
-        )
-        secs.append(f"<h3>{cat}</h3>{links}")
-    return ("<nav id='am-side'>"
-            "<a class='am-home' href='/activityMetrics'>← Tous les rapports</a>"
-            f"{''.join(secs)}</nav>")
+    return (
+        "<button id='am-burger' aria-label='Calendrier'>☰ Calendrier</button>"
+        "<nav id='am-side'>"
+        "<a class='am-home' href='/activityMetrics'>← Tous les rapports</a>"
+        + _CAL_MARKUP +
+        "</nav>"
+    )
 
 
 # Script Node exécuté sur le VPS (lecture seule) : jours travaillés Timesheet
@@ -998,7 +988,7 @@ def _recon_assets(recon):
 
 
 def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
-                 current=None, recon=None):
+                 current=None, recon=None, day_hours=None):
     """Rapport HTML complet : arbre projet › app › onglets (le « détail »)."""
     def pct(part, whole):
         return f"{round(100 * part / whole)}%" if whole else ""
@@ -1035,6 +1025,9 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
     recon_btn, recon_overlay, recon_script = _recon_assets(recon)
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     nav_html = _nav_html(nav, current)
+    cal_css = _CAL_CSS if nav else ""
+    cal_data = _cal_data(day_hours, nav, current) if nav else ""
+    cal_js = _CAL_JS if nav else ""
 
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1043,12 +1036,25 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e}}
  .am-wrap{{display:flex;gap:2.5rem;max-width:1040px;margin:40px auto;padding:0 20px}}
  .am-main{{flex:1;min-width:0;max-width:760px}}
- #am-side{{width:190px;flex-shrink:0;position:sticky;top:40px;align-self:flex-start;font-size:.9rem;line-height:1.4}}
- #am-side .am-home{{display:block;font-weight:700;margin-bottom:.6rem}}
- #am-side h3{{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#8a8aa0;margin:1rem 0 .25rem;border:0}}
- #am-side a{{display:block;padding:.2rem 0;color:inherit;text-decoration:none}}
- #am-side a:hover,#am-side a.cur{{color:#3f37c9;font-weight:700}}
- @media(max-width:720px){{.am-wrap{{flex-direction:column;gap:1rem;margin:24px auto;padding:0 16px}}.am-main{{max-width:none}}#am-side{{width:auto;position:static;order:-1;font-size:.85rem}}#am-side h3{{margin-top:.4rem}}#am-side .am-home{{margin-bottom:.3rem}}#am-recon-btn{{top:10px;right:10px;padding:.4rem .7rem;font-size:.78rem}}.total{{font-size:1.7rem}}}}
+ #am-side{{width:236px;flex-shrink:0;position:sticky;top:24px;align-self:flex-start}}
+ #am-side .am-home{{display:block;font-weight:700;margin-bottom:.6rem;color:inherit;text-decoration:none;font-size:.82rem}}
+ #am-side .am-home:hover{{color:#3f37c9}}
+ #am-side .am-bilan{{font-size:.8rem;padding:.55rem .6rem;border-radius:10px}}
+ #am-side #mlabel{{font-size:.9rem}}
+ #am-side .am-cal-head button{{width:32px;height:32px;font-size:.85rem}}
+ #am-side .am-cell .d{{font-size:.95rem}}
+ #am-side .am-cell .hh{{font-size:.5rem;margin-top:.15rem}}
+ #am-side .am-legend{{font-size:.55rem;gap:.25rem}}
+ #am-burger{{display:none}}
+ @media(max-width:720px){{
+  .am-wrap{{flex-direction:column;gap:1rem;margin:20px auto;padding:0 16px}}
+  .am-main{{max-width:none}}
+  #am-burger{{display:inline-flex;align-items:center;gap:.3rem;position:fixed;top:10px;left:10px;z-index:60;padding:.4rem .7rem;border:1px solid #3f37c9;border-radius:10px;background:#fff;color:#3f37c9;font-weight:700;font-size:.8rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+  #am-side{{position:static;width:auto;order:-1;display:none;margin-top:2.8rem}}
+  #am-side.open{{display:block}}
+  #am-recon-btn{{top:10px;right:10px;padding:.4rem .7rem;font-size:.78rem}}
+  .total{{font-size:1.7rem}}
+ }}
  h1{{font-size:1.4rem;margin-bottom:.2rem}}
  h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
  h2,details{{margin-top:1.8rem}}
@@ -1071,7 +1077,8 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  .am-modal-card{{position:relative;background:#fff;color:#1a1a2e;max-width:440px;width:100%;border-radius:14px;padding:24px;box-shadow:0 12px 48px rgba(0,0,0,.35)}}
  .am-modal-x{{position:absolute;top:8px;right:14px;border:0;background:none;font-size:1.7rem;line-height:1;color:#8a8aa0;cursor:pointer}}
  .am-modal-h{{border:0;display:block;margin:0 0 .6rem;font-size:1.15rem;font-weight:700}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side a:hover,#am-side a.cur{{color:#8b83ff}}#am-recon-btn{{background:#1c1c28;color:#8b83ff;border-color:#8b83ff}}#am-recon-btn:hover{{background:#8b83ff;color:#14141f}}.am-modal-card{{background:#1c1c28;color:#e8e8f0}}}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side .am-home:hover{{color:#8b83ff}}#am-recon-btn,#am-burger{{background:#1c1c28;color:#8b83ff;border-color:#8b83ff}}#am-recon-btn:hover{{background:#8b83ff;color:#14141f}}.am-modal-card{{background:#1c1c28;color:#e8e8f0}}}}
+{cal_css}
 {gstyle}
 </style></head><body>
 {goverlay}
@@ -1087,6 +1094,8 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <details><summary><span class='lbl'><span class='chev'>▸</span> Par application (global)</span></summary><table>{apps_rows}</table></details>
 </main>
 </div></div>
+{cal_data}
+{cal_js}
 {gscript}
 {recon_script}
 </body></html>"""
@@ -1149,85 +1158,109 @@ def _index_label(slug):
     return "Autres", slug, slug
 
 
-_INDEX_CSS = """
- *{box-sizing:border-box}
- body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
- .am-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid #ececf5}
- .am-tabs a{padding:.7rem 1.1rem;color:#6b6b80;text-decoration:none;font-weight:600;font-size:.9rem;border-bottom:2px solid transparent}
- .am-tabs a.on{color:#3f37c9;border-bottom-color:#3f37c9}
- .am-tabs a:hover{color:#3f37c9}
- .am-cal{max-width:600px;margin:28px auto;padding:0 20px;text-align:center}
- h1{font-size:1.4rem;margin:.2rem 0}
- .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.2rem}
- .am-cal-head{display:flex;align-items:center;justify-content:center;gap:1rem;margin:.6rem 0}
- .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:44px;height:44px;font-size:1.1rem;cursor:pointer;color:#3f37c9}
+# --- Composant calendrier partagé (index + menu latéral des rapports) --------
+_CAL_CSS = """
+ .am-cal{text-align:center}
+ .am-cal-head{display:flex;align-items:center;justify-content:center;gap:.5rem;margin:.4rem 0}
+ .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:40px;height:40px;font-size:1rem;cursor:pointer;color:#3f37c9;flex-shrink:0}
  .am-cal-head button:hover{background:#f2f2fb}
- #mlabel{font-size:1.2rem;font-weight:700;min-width:200px;text-transform:capitalize}
- .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
- .am-wd{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#8a8aa0;font-weight:700;padding:2px 0}
- .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:10px;color:#c4c4d0;background:#f5f5fa}
- .am-cell .d{font-size:1.35rem;font-weight:700;line-height:1}
- .am-cell .hh{font-size:.6rem;font-weight:600;line-height:1.3;opacity:.9}
+ #mlabel{font-size:1.1rem;font-weight:700;text-transform:capitalize;flex:1}
+ .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+ .am-wd{font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#8a8aa0;font-weight:700}
+ .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:9px;color:#c4c4d0;background:#f5f5fa}
+ .am-cell .d{font-size:1.25rem;font-weight:700;line-height:1}
+ .am-cell .hh{font-size:.58rem;font-weight:600;line-height:1;opacity:.95;margin-top:.35rem}
  .am-cell.am-empty{background:none}
- a.am-cell.am-has{background:#3f37c9;text-decoration:none}
+ a.am-cell.am-has{text-decoration:none;color:#fff}
  a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#fff}
- a.am-cell.am-has:hover{background:#5b52e0}
- .am-cell.am-today{outline:2px solid #ff8c42;outline-offset:-2px}
- .am-bilans{display:flex;flex-direction:column;gap:10px;margin:1.6rem 0 0}
- .am-bilan{display:block;padding:1rem 1.2rem;border-radius:14px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:800;font-size:1.15rem}
+ a.am-cell.am-has:hover{filter:brightness(1.08)}
+ .am-cell.am-today{outline:2px solid #1a1a2e;outline-offset:-2px}
+ .am-cell.am-cur{outline:3px solid #3f37c9;outline-offset:-3px}
+ .am-legend{display:flex;align-items:center;justify-content:center;gap:.4rem;font-size:.66rem;color:#8a8aa0;margin:.7rem 0 0}
+ .am-legend i{width:14px;height:14px;border-radius:4px;display:inline-block}
+ .am-bilans{display:flex;flex-direction:column;gap:9px;margin:1.2rem 0 0}
+ .am-bilan{display:block;padding:.9rem 1.1rem;border-radius:13px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:800;font-size:1.05rem}
  .am-bilan.year{background:#1a1a2e}
  .am-bilan:hover{filter:brightness(1.12)}
  .am-bilan.off{background:#d8d8e2;color:#9a9aab;pointer-events:none}
- #weeks{margin-top:1.6rem;text-align:left}
- #weeks h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
+ #weeks{margin-top:1.1rem;text-align:left}
+ #weeks h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
  #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#3f37c9;text-decoration:none;font-weight:600}
- @media(max-width:560px){.am-cal{margin:16px auto}.am-cell{font-size:.95rem;border-radius:8px}.am-grid{gap:4px}#mlabel{font-size:1.05rem;min-width:0}.am-bilan{font-size:1.05rem;padding:.85rem 1rem}}
- @media(prefers-color-scheme:dark){body{background:#14141f;color:#e8e8f0}
-  .am-tabs{border-color:#2a2a3a}.am-tabs a.on{color:#8b83ff;border-bottom-color:#8b83ff}.am-tabs a:hover{color:#8b83ff}
+ @media(prefers-color-scheme:dark){
   .am-cal-head button{background:#1c1c28;border-color:#2a2a3a;color:#8b83ff}
   .am-cal-head button:hover{background:#25253a}
   .am-cell{background:#1c1c28;color:#54546a}
-  a.am-cell.am-has{background:#8b83ff;color:#14141f}
-  a.am-cell.am-has:hover{background:#a49dff}
-  .am-bilan{background:#8b83ff;color:#14141f}.am-bilan.year{background:#3a3a52;color:#e8e8f0}.am-bilan.off{background:#2a2a3a;color:#54546a}
+  .am-cell.am-today{outline-color:#e8e8f0}
+  .am-bilan.year{background:#3a3a52;color:#e8e8f0}.am-bilan.off{background:#2a2a3a;color:#54546a}
   #weeks a{color:#8b83ff}}
 """
 
-_INDEX_JS = """
+_CAL_MARKUP = (
+    "<div class='am-cal'>"
+    "<div class='am-cal-head'><button id='prev' aria-label='Mois précédent'>◀</button>"
+    "<div id='mlabel'></div>"
+    "<button id='next' aria-label='Mois suivant'>▶</button></div>"
+    "<div class='am-grid' id='grid'></div>"
+    "<div class='am-legend'>Peu <i style='background:hsl(140,62%,44%)'></i>"
+    "<i style='background:hsl(90,62%,44%)'></i><i style='background:hsl(45,80%,50%)'></i>"
+    "<i style='background:hsl(20,80%,50%)'></i><i style='background:hsl(0,72%,48%)'></i> Beaucoup</div>"
+    "<div class='am-bilans'>"
+    "<a id='mbtn' class='am-bilan off'>Bilan du mois</a>"
+    "<a id='ybtn' class='am-bilan year off'>Bilan de l'année</a>"
+    "</div><div id='weeks'></div></div>"
+)
+
+_CAL_JS = """
 <script>(function(){
- var DAYS=window.AM_DAYS||{},MONTHS=new Set(window.AM_MONTHS||[]),YEARS=new Set(window.AM_YEARS||[]);
+ var DAYS=window.AM_DAYS||{},MONTHS=new Set(window.AM_MONTHS||[]),YEARS=new Set(window.AM_YEARS||[]),CUR=window.AM_CURRENT||'';
  var FM=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
  var WD=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
  var now=new Date();
  function pad(n){return(n<10?'0':'')+n;}
  function hlabel(v){return(''+v).replace('.',',')+'h';}
+ function heat(h){var f=Math.max(0,Math.min(1,(h-2)/9));var hue=140-f*140;var s=f<0.4?58:76,l=f<0.4?45:47;return 'hsl('+Math.round(hue)+','+s+'%,'+l+'%)';}
  var today=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
  var latest=Object.keys(DAYS).sort().pop();
  var y,m;
- if(latest){var p=latest.split('-');y=+p[0];m=+p[1]-1;}else{y=now.getFullYear();m=now.getMonth();}
- function setBtn(el,key,has){if(has){el.href='/activityMetrics/'+key;el.classList.remove('off');}else{el.removeAttribute('href');el.classList.add('off');}}
+ if(/^\\d{4}-\\d{2}-\\d{2}$/.test(CUR)){var pc=CUR.split('-');y=+pc[0];m=+pc[1]-1;}
+ else if(latest){var p=latest.split('-');y=+p[0];m=+p[1]-1;}
+ else{y=now.getFullYear();m=now.getMonth();}
+ function setBtn(el,key,has){if(!el)return;if(has){el.href='/activityMetrics/'+key;el.classList.remove('off');}else{el.removeAttribute('href');el.classList.add('off');}}
  function render(){
   var mkey=y+'-'+pad(m+1);
   document.getElementById('mlabel').textContent=FM[m]+' '+y;
-  var mb=document.getElementById('mbtn');mb.textContent='📊 Bilan du mois — '+FM[m]+' '+y;
-  setBtn(mb,mkey,MONTHS.has(mkey));
-  var yb=document.getElementById('ybtn');yb.textContent="📅 Bilan de l'année "+y;
-  setBtn(yb,''+y,YEARS.has(''+y));
+  var mb=document.getElementById('mbtn');if(mb){mb.textContent='📊 Bilan du mois';setBtn(mb,mkey,MONTHS.has(mkey));}
+  var yb=document.getElementById('ybtn');if(yb){yb.textContent="📅 Bilan de l'année "+y;setBtn(yb,''+y,YEARS.has(''+y));}
   var start=(new Date(y,m,1).getDay()+6)%7,nd=new Date(y,m+1,0).getDate(),h='';
   WD.forEach(function(d){h+='<div class="am-wd">'+d+'</div>';});
   for(var i=0;i<start;i++)h+='<div class="am-cell am-empty"></div>';
-  for(var d=1;d<=nd;d++){var k=y+'-'+pad(m+1)+'-'+pad(d),t=(k===today?' am-today':'');
-   if(DAYS[k]!==undefined)h+='<a class="am-cell am-has'+t+'" href="/activityMetrics/'+k+'"><span class="d">'+d+'</span><span class="hh">'+hlabel(DAYS[k])+'</span></a>';
+  for(var d=1;d<=nd;d++){var k=y+'-'+pad(m+1)+'-'+pad(d),t=(k===today?' am-today':'')+(k===CUR?' am-cur':'');
+   if(DAYS[k]!==undefined)h+='<a class="am-cell am-has'+t+'" style="background:'+heat(DAYS[k])+'" href="/activityMetrics/'+k+'"><span class="d">'+d+'</span><span class="hh">'+hlabel(DAYS[k])+'</span></a>';
    else h+='<div class="am-cell'+t+'"><span class="d">'+d+'</span></div>';}
   document.getElementById('grid').innerHTML=h;
  }
  document.getElementById('prev').onclick=function(){if(--m<0){m=11;y--;}render();};
  document.getElementById('next').onclick=function(){if(++m>11){m=0;y++;}render();};
  render();
- var w=window.AM_WEEKS||[];
- if(w.length){var wh='<h3>Semaines</h3>';w.forEach(function(s){wh+='<a href="/activityMetrics/'+s+'">'+s.replace('semaine-','Semaine du ')+'</a>';});document.getElementById('weeks').innerHTML=wh;}
+ var w=window.AM_WEEKS||[],we=document.getElementById('weeks');
+ if(w.length&&we){var wh='<h3>Semaines</h3>';w.forEach(function(s){wh+='<a href="/activityMetrics/'+s+'">'+s.replace('semaine-','Semaine du ')+'</a>';});we.innerHTML=wh;}
+ var bg=document.getElementById('am-burger'),sd=document.getElementById('am-side');
+ if(bg&&sd){bg.onclick=function(){sd.classList.toggle('open');};}
 })();</script>
 """
+
+
+def _cal_data(day_hours, slugs, current=None):
+    months = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}", s))
+    years = sorted(s for s in slugs if re.fullmatch(r"\d{4}", s))
+    weeks = sorted((s for s in slugs if s.startswith("semaine-")), reverse=True)
+    js = ("<script>window.AM_DAYS=" + json.dumps(day_hours or {})
+          + ";window.AM_MONTHS=" + json.dumps(months)
+          + ";window.AM_YEARS=" + json.dumps(years)
+          + ";window.AM_WEEKS=" + json.dumps(weeks))
+    if current:
+        js += ";window.AM_CURRENT=" + json.dumps(current)
+    return js + ";</script>"
 
 
 def _worked_day_hours(cfg):
@@ -1248,15 +1281,26 @@ def _worked_day_hours(cfg):
     return out
 
 
+_INDEX_BODY_CSS = """
+ *{box-sizing:border-box}
+ body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
+ .am-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid #ececf5}
+ .am-tabs a{padding:.7rem 1.1rem;color:#6b6b80;text-decoration:none;font-weight:600;font-size:.9rem;border-bottom:2px solid transparent}
+ .am-tabs a.on{color:#3f37c9;border-bottom-color:#3f37c9}
+ .am-tabs a:hover{color:#3f37c9}
+ .am-page{max-width:600px;margin:24px auto;padding:0 20px}
+ h1{font-size:1.4rem;margin:.2rem 0;text-align:center}
+ .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.1rem;text-align:center}
+ .am-page #mlabel{font-size:1.2rem}
+ .am-page .am-bilan{font-size:1.15rem;padding:1rem 1.2rem}
+ @media(max-width:560px){.am-page{margin:14px auto}}
+ @media(prefers-color-scheme:dark){body{background:#14141f;color:#e8e8f0}
+  .am-tabs{border-color:#2a2a3a}.am-tabs a.on{color:#8b83ff;border-bottom-color:#8b83ff}.am-tabs a:hover{color:#8b83ff}}
+"""
+
+
 def _render_index(slugs, gate_hash=None, day_hours=None):
-    day_hours = day_hours or {}
-    months = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}", s))
-    years = sorted(s for s in slugs if re.fullmatch(r"\d{4}", s))
-    weeks = sorted((s for s in slugs if s.startswith("semaine-")), reverse=True)
-    data = ("<script>window.AM_DAYS=" + json.dumps(day_hours)
-            + ";window.AM_MONTHS=" + json.dumps(months)
-            + ";window.AM_YEARS=" + json.dumps(years)
-            + ";window.AM_WEEKS=" + json.dumps(weeks) + ";</script>")
+    data = _cal_data(day_hours, slugs)
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     body = (
         "<div id='am-app'>"
@@ -1264,25 +1308,17 @@ def _render_index(slugs, gate_hash=None, day_hours=None):
         "<a class='on' href='/activityMetrics'>Mon activité</a>"
         "<a href='https://marie.padestremau.com/' target='_blank' rel='noopener'>Marie ↗</a>"
         "</div>"
-        "<div class='am-cal'>"
+        "<div class='am-page'>"
         "<h1>📊 ActivityMetrics</h1>"
         "<p class='am-sub'>Choisissez un jour, ou un bilan.</p>"
-        "<div class='am-cal-head'><button id='prev' aria-label='Mois précédent'>◀</button>"
-        "<div id='mlabel'></div>"
-        "<button id='next' aria-label='Mois suivant'>▶</button></div>"
-        "<div class='am-grid' id='grid'></div>"
-        "<div class='am-bilans'>"
-        "<a id='mbtn' class='am-bilan off'>Bilan du mois</a>"
-        "<a id='ybtn' class='am-bilan year off'>Bilan de l'année</a>"
-        "</div>"
-        "<div id='weeks'></div>"
+        + _CAL_MARKUP +
         "</div></div>"
     )
     return ("<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             "<title>ActivityMetrics — rapports</title><style>"
-            + _INDEX_CSS + gstyle + "</style></head><body>"
-            + goverlay + body + data + _INDEX_JS + gscript
+            + _INDEX_BODY_CSS + _CAL_CSS + gstyle + "</style></head><body>"
+            + goverlay + body + data + _CAL_JS + gscript
             + "</body></html>")
 
 
