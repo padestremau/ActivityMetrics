@@ -732,9 +732,11 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
                     f"<td class='n'>{pct(s, a['total'])}</td></tr>"
                 )
         blocks.append(
-            f"<h2>▸ {_esc(proj)} <span class='pt'>{_fmt_h(node['total'])} · "
-            f"{pct(node['total'], total_s)}</span></h2>"
-            f"<table>{''.join(rows)}</table>"
+            f"<details open><summary><span class='lbl'>"
+            f"<span class='chev'>▸</span> {_esc(proj)}</span>"
+            f"<span class='pt'>{_fmt_h(node['total'])} · "
+            f"{pct(node['total'], total_s)}</span></summary>"
+            f"<table>{''.join(rows)}</table></details>"
         )
 
     apps_rows = "".join(
@@ -749,7 +751,12 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
 <style>
  body{{font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
  h1{{font-size:1.4rem;margin-bottom:.2rem}}
- h2{{font-size:1.05rem;margin-top:1.8rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
+ h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
+ h2,details{{margin-top:1.8rem}}
+ summary{{cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}}
+ summary::-webkit-details-marker{{display:none}}
+ .chev{{display:inline-block;transition:transform .15s;font-size:.8em;color:#3f37c9}}
+ details[open] summary .chev{{transform:rotate(90deg)}}
  .pt{{font-size:.9rem;font-weight:600;color:#3f37c9}}
  .total{{font-size:2rem;font-weight:700;color:#3f37c9;margin:.2rem 0 0}}
  table{{width:100%;border-collapse:collapse;margin-top:.3rem}}
@@ -757,7 +764,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
  tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total{{color:#8b83ff}}}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}}}
 {gstyle}
 </style></head><body>
 {goverlay}
