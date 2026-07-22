@@ -844,10 +844,12 @@ def am_day_equivalents(start, end, cfg):
             "hours": round(secs / 3600.0, 1), "full_h": full, "half_h": half}
 
 
-def _recon_html(recon):
-    """Section « Rapprochement Timesheet » (jours facturés vs jours travaillés)."""
+def _recon_assets(recon):
+    """(bouton, encadré-modale, script) du rapprochement Timesheet.
+    Bouton en haut à droite → ouvre un encadré au-dessus de tout le contenu.
+    recon absent → chaînes vides."""
     if not recon:
-        return ""
+        return "", "", ""
     ts, am = recon["ts"], recon["am"]
     gap = recon["gap"]
     cli = "".join(
@@ -859,11 +861,7 @@ def _recon_html(recon):
     plan_row = (f"<tr><td>dont prévisionnel (non facturé)</td>"
                 f"<td class='n'>{plan:.1f} j</td><td></td></tr>" if plan else "")
     gap_sign = "+" if gap >= 0 else ""
-    return (
-        "<details open><summary><span class='lbl'><span class='chev'>▸</span> "
-        "Rapprochement Timesheet</span>"
-        f"<span class='pt'>{am['fde']:.1f} j vs {ts['total']['realDays']:.1f} j</span>"
-        "</summary><table>"
+    rows = (
         f"<tr><td><strong>Jours facturés (Timesheet)</strong></td>"
         f"<td class='n'><strong>{ts['total']['realDays']:.1f} j</strong></td><td></td></tr>"
         f"{cli}{plan_row}"
@@ -875,8 +873,25 @@ def _recon_html(recon):
         f"<td class='n'>{am['active_days']} j</td><td></td></tr>"
         f"<tr><td><strong>Écart (activité non facturée)</strong></td>"
         f"<td class='n'><strong>{gap_sign}{gap:.1f} j</strong></td><td></td></tr>"
-        "</table></details>"
     )
+    button = ("<button id='am-recon-btn'>🗓 Rapprochement "
+              f"<b>{gap_sign}{gap:.1f} j</b></button>")
+    overlay = (
+        "<div id='am-recon' class='am-modal hide'><div class='am-modal-card'>"
+        "<button class='am-modal-x' id='am-recon-x' aria-label='Fermer'>&times;</button>"
+        "<h2 class='am-modal-h'>Rapprochement Timesheet</h2>"
+        f"<table>{rows}</table></div></div>"
+    )
+    script = (
+        "<script>(function(){var b=document.getElementById('am-recon-btn'),"
+        "m=document.getElementById('am-recon'),x=document.getElementById('am-recon-x');"
+        "function o(){m.classList.remove('hide');}function c(){m.classList.add('hide');}"
+        "b.addEventListener('click',o);x.addEventListener('click',c);"
+        "m.addEventListener('click',function(e){if(e.target===m)c();});"
+        "document.addEventListener('keydown',function(e){if(e.key==='Escape')c();});"
+        "})();</script>"
+    )
+    return button, overlay, script
 
 
 def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
@@ -914,7 +929,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
         f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td></tr>"
         for app, s in by_app[:12] if s >= 60
     )
-    recon_html = _recon_html(recon)
+    recon_btn, recon_overlay, recon_script = _recon_assets(recon)
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     nav_html = _nav_html(nav, current)
 
@@ -945,21 +960,32 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side a:hover,#am-side a.cur{{color:#8b83ff}}}}
+ #am-recon-btn{{position:fixed;top:16px;right:16px;z-index:60;padding:.5rem .85rem;border:1px solid #3f37c9;border-radius:999px;background:#fff;color:#3f37c9;font-size:.85rem;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+ #am-recon-btn b{{font-weight:800}}
+ #am-recon-btn:hover{{background:#3f37c9;color:#fff}}
+ .am-modal{{position:fixed;inset:0;z-index:200;background:rgba(20,20,31,.55);display:flex;align-items:center;justify-content:center;padding:20px}}
+ .am-modal.hide{{display:none}}
+ .am-modal-card{{position:relative;background:#fff;color:#1a1a2e;max-width:440px;width:100%;border-radius:14px;padding:24px;box-shadow:0 12px 48px rgba(0,0,0,.35)}}
+ .am-modal-x{{position:absolute;top:8px;right:14px;border:0;background:none;font-size:1.7rem;line-height:1;color:#8a8aa0;cursor:pointer}}
+ .am-modal-h{{border:0;display:block;margin:0 0 .6rem;font-size:1.15rem;font-weight:700}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side a:hover,#am-side a.cur{{color:#8b83ff}}#am-recon-btn{{background:#1c1c28;color:#8b83ff;border-color:#8b83ff}}#am-recon-btn:hover{{background:#8b83ff;color:#14141f}}.am-modal-card{{background:#1c1c28;color:#e8e8f0}}}}
 {gstyle}
 </style></head><body>
 {goverlay}
-<div id="am-app"><div class="am-wrap">
+<div id="am-app">
+{recon_btn}
+{recon_overlay}
+<div class="am-wrap">
 {nav_html}
 <main class="am-main">
 <h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
 <p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
-{recon_html}
 {''.join(blocks)}
 <details><summary><span class='lbl'><span class='chev'>▸</span> Par application (global)</span></summary><table>{apps_rows}</table></details>
 </main>
 </div></div>
 {gscript}
+{recon_script}
 </body></html>"""
 
 
@@ -1018,43 +1044,98 @@ def _index_label(slug):
     return "Autres", slug, slug
 
 
+_INDEX_CSS = """
+ body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
+ .am-cal{max-width:600px;margin:36px auto;padding:0 20px;text-align:center}
+ h1{font-size:1.4rem;margin:.2rem 0}
+ .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.4rem}
+ .am-cal-head{display:flex;align-items:center;justify-content:center;gap:1rem;margin:.6rem 0}
+ .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:42px;height:42px;font-size:1.1rem;cursor:pointer;color:#3f37c9}
+ .am-cal-head button:hover{background:#f2f2fb}
+ #mlabel{font-size:1.2rem;font-weight:700;min-width:220px;text-transform:capitalize}
+ .am-mbtn{display:inline-block;margin:.2rem 0 1.2rem;padding:.55rem 1rem;border-radius:999px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}
+ .am-mbtn:hover{background:#5b52e0}
+ .am-mbtn.off{background:#d8d8e2;color:#9a9aab;pointer-events:none}
+ .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+ .am-wd{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#8a8aa0;font-weight:700;padding:2px 0}
+ .am-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:1rem;color:#c4c4d0;background:#f5f5fa}
+ .am-cell.am-empty{background:none}
+ a.am-cell.am-has{color:#fff;background:#3f37c9;font-weight:700;text-decoration:none}
+ a.am-cell.am-has:hover{background:#5b52e0}
+ .am-cell.am-today{outline:2px solid #ff8c42;outline-offset:-2px}
+ #weeks{margin-top:1.6rem;text-align:left}
+ #weeks h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
+ #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#3f37c9;text-decoration:none;font-weight:600}
+ @media(prefers-color-scheme:dark){body{background:#14141f;color:#e8e8f0}
+  .am-cal-head button{background:#1c1c28;border-color:#2a2a3a;color:#8b83ff}
+  .am-cal-head button:hover{background:#25253a}
+  .am-cell{background:#1c1c28;color:#54546a}
+  a.am-cell.am-has{background:#8b83ff;color:#14141f}
+  a.am-cell.am-has:hover{background:#a49dff}
+  .am-mbtn{background:#8b83ff;color:#14141f}.am-mbtn.off{background:#2a2a3a;color:#54546a}
+  #weeks a{color:#8b83ff}}
+"""
+
+_INDEX_JS = """
+<script>(function(){
+ var DAYS=new Set(window.AM_DAYS||[]),MONTHS=new Set(window.AM_MONTHS||[]);
+ var FM=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+ var WD=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+ var now=new Date();
+ function pad(n){return(n<10?'0':'')+n;}
+ var today=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
+ var latest=(window.AM_DAYS||[]).slice().sort().pop();
+ var y,m;
+ if(latest){var p=latest.split('-');y=+p[0];m=+p[1]-1;}else{y=now.getFullYear();m=now.getMonth();}
+ function render(){
+  var mkey=y+'-'+pad(m+1);
+  document.getElementById('mlabel').textContent=FM[m]+' '+y;
+  var mb=document.getElementById('mbtn');
+  if(MONTHS.has(mkey)){mb.href='/activityMetrics/'+mkey;mb.classList.remove('off');}
+  else{mb.removeAttribute('href');mb.classList.add('off');}
+  var start=(new Date(y,m,1).getDay()+6)%7,nd=new Date(y,m+1,0).getDate(),h='';
+  WD.forEach(function(d){h+='<div class="am-wd">'+d+'</div>';});
+  for(var i=0;i<start;i++)h+='<div class="am-cell am-empty"></div>';
+  for(var d=1;d<=nd;d++){var k=y+'-'+pad(m+1)+'-'+pad(d),t=(k===today?' am-today':'');
+   if(DAYS.has(k))h+='<a class="am-cell am-has'+t+'" href="/activityMetrics/'+k+'">'+d+'</a>';
+   else h+='<div class="am-cell'+t+'">'+d+'</div>';}
+  document.getElementById('grid').innerHTML=h;
+ }
+ document.getElementById('prev').onclick=function(){if(--m<0){m=11;y--;}render();};
+ document.getElementById('next').onclick=function(){if(++m>11){m=0;y++;}render();};
+ render();
+ var w=window.AM_WEEKS||[];
+ if(w.length){var wh='<h3>Semaines</h3>';w.forEach(function(s){wh+='<a href="/activityMetrics/'+s+'">'+s.replace('semaine-','Semaine du ')+'</a>';});document.getElementById('weeks').innerHTML=wh;}
+})();</script>
+"""
+
+
 def _render_index(slugs, gate_hash=None):
-    groups = {"Jours": [], "Semaines": [], "Mois": [], "Autres": []}
-    for s in slugs:
-        cat, lbl, sortkey = _index_label(s)
-        groups[cat].append((sortkey, lbl, s))
-    sections = []
-    for cat in ("Jours", "Semaines", "Mois", "Autres"):
-        items = sorted(groups[cat], reverse=True)
-        if not items:
-            continue
-        links = "".join(
-            f"<li><a href='/activityMetrics/{_esc(s)}'>{_esc(lbl)}</a></li>"
-            for _, lbl, s in items
-        )
-        sections.append(f"<h2>{cat}</h2><ul>{links}</ul>")
+    days = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s))
+    months = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}", s))
+    weeks = sorted((s for s in slugs if s.startswith("semaine-")), reverse=True)
+    data = ("<script>window.AM_DAYS=" + json.dumps(days)
+            + ";window.AM_MONTHS=" + json.dumps(months)
+            + ";window.AM_WEEKS=" + json.dumps(weeks) + ";</script>")
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
-    return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ActivityMetrics — rapports</title>
-<style>
- body{{font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
- h1{{font-size:1.4rem}}
- h2{{font-size:1rem;color:#3f37c9;margin-top:1.8rem;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
- ul{{list-style:none;padding:0;margin:.4rem 0}}
- li{{padding:.35rem 0;border-bottom:1px solid #ececf5}}
- a{{color:inherit;text-decoration:none;font-weight:600}}
- a:hover{{color:#3f37c9}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2{{color:#8b83ff;border-color:#8b83ff}}li{{border-color:#2a2a3a}}a:hover{{color:#8b83ff}}}}
-{gstyle}
-</style></head><body>
-{goverlay}
-<div id="am-app">
-<h1>📊 ActivityMetrics</h1><p>Tous les rapports de suivi du temps.</p>
-{''.join(sections) or '<p>Aucun rapport pour l’instant.</p>'}
-</div>
-{gscript}
-</body></html>"""
+    body = (
+        "<div id='am-app'><div class='am-cal'>"
+        "<h1>📊 ActivityMetrics</h1>"
+        "<p class='am-sub'>Choisissez un jour, ou le bilan du mois.</p>"
+        "<div class='am-cal-head'><button id='prev' aria-label='Mois précédent'>◀</button>"
+        "<div id='mlabel'></div>"
+        "<button id='next' aria-label='Mois suivant'>▶</button></div>"
+        "<a id='mbtn' class='am-mbtn off'>Bilan du mois →</a>"
+        "<div class='am-grid' id='grid'></div>"
+        "<div id='weeks'></div>"
+        "</div></div>"
+    )
+    return ("<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>ActivityMetrics — rapports</title><style>"
+            + _INDEX_CSS + gstyle + "</style></head><body>"
+            + goverlay + body + data + _INDEX_JS + gscript
+            + "</body></html>")
 
 
 def _list_remote_slugs(cfg):
