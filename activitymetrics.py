@@ -635,14 +635,23 @@ def cmd_report(args):
                 print("  " + _fmt_row(f"     - {tab}", s, tpct, W, sub=True))
         print()
 
-    html_str = _render_html(label, total_s, tree, by_app, _gate_hash(cfg))
+    cur_slug = _period_slug(args, start)
+    # Menu latéral : liste des rapports déjà publiés (uniquement si on publie).
+    nav = []
+    if (getattr(args, "html", False) or getattr(args, "telegram", False)) \
+            and cfg.get("publish"):
+        nav = _list_remote_slugs(cfg)
+        if cur_slug not in nav:
+            nav = [cur_slug] + nav
+    html_str = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
+                            nav, cur_slug)
 
     if getattr(args, "html", False):
         path = _write_html_local(html_str)
         print(f"  → Rapport HTML : {path}\n")
 
     if getattr(args, "telegram", False):
-        url = publish_report(html_str, _period_slug(args, start), cfg)
+        url = publish_report(html_str, cur_slug, cfg)
         send_telegram(_telegram_text(label, total_s, tree), button_url=url)
         if url:
             print(f"  → Détail publié : {url}\n")
@@ -709,7 +718,32 @@ def _gate_assets(gate_hash):
     return style, overlay, script
 
 
-def _render_html(label, total_s, tree, by_app, gate_hash=None):
+def _nav_html(nav, current):
+    """Menu latéral gauche : liens vers les derniers rapports."""
+    if not nav:
+        return ""
+    groups = {"Jours": [], "Semaines": [], "Mois": [], "Autres": []}
+    for s in nav:
+        cat, lbl, sk = _index_label(s)
+        groups[cat].append((sk, lbl, s))
+    secs = []
+    for cat in ("Jours", "Semaines", "Mois", "Autres"):
+        items = sorted(groups[cat], reverse=True)[:8]
+        if not items:
+            continue
+        links = "".join(
+            f"<a class='{'cur' if s == current else ''}' "
+            f"href='/activityMetrics/{_esc(s)}'>{_esc(lbl)}</a>"
+            for _, lbl, s in items
+        )
+        secs.append(f"<h3>{cat}</h3>{links}")
+    return ("<nav id='am-side'>"
+            "<a class='am-home' href='/activityMetrics'>← Tous les rapports</a>"
+            f"{''.join(secs)}</nav>")
+
+
+def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
+                 current=None):
     """Rapport HTML complet : arbre projet › app › onglets (le « détail »)."""
     def pct(part, whole):
         return f"{round(100 * part / whole)}%" if whole else ""
@@ -732,7 +766,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
                     f"<td class='n'>{pct(s, a['total'])}</td></tr>"
                 )
         blocks.append(
-            f"<details open><summary><span class='lbl'>"
+            f"<details><summary><span class='lbl'>"
             f"<span class='chev'>▸</span> {_esc(proj)}</span>"
             f"<span class='pt'>{_fmt_h(node['total'])} · "
             f"{pct(node['total'], total_s)}</span></summary>"
@@ -744,12 +778,21 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
         for app, s in by_app[:12] if s >= 60
     )
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
+    nav_html = _nav_html(nav, current)
 
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ActivityMetrics — {_esc(label)}</title>
 <style>
- body{{font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#1a1a2e}}
+ body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e}}
+ .am-wrap{{display:flex;gap:2.5rem;max-width:1040px;margin:40px auto;padding:0 20px}}
+ .am-main{{flex:1;min-width:0;max-width:760px}}
+ #am-side{{width:190px;flex-shrink:0;position:sticky;top:40px;align-self:flex-start;font-size:.9rem;line-height:1.4}}
+ #am-side .am-home{{display:block;font-weight:700;margin-bottom:.6rem}}
+ #am-side h3{{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#8a8aa0;margin:1rem 0 .25rem;border:0}}
+ #am-side a{{display:block;padding:.2rem 0;color:inherit;text-decoration:none}}
+ #am-side a:hover,#am-side a.cur{{color:#3f37c9;font-weight:700}}
+ @media(max-width:720px){{.am-wrap{{flex-direction:column;gap:1rem}}#am-side{{width:auto;position:static}}#am-side h3{{margin-top:.5rem}}}}
  h1{{font-size:1.4rem;margin-bottom:.2rem}}
  h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
  h2,details{{margin-top:1.8rem}}
@@ -764,16 +807,19 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None):
  tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
- @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}}}
+ @media(prefers-color-scheme:dark){{body{{background:#14141f;color:#e8e8f0}}h2,summary{{color:#e8e8f0;border-color:#8b83ff}}td{{border-color:#2a2a3a}}tr.sub td{{color:#a0a0c0}}.pt,.total,.chev{{color:#8b83ff}}#am-side a:hover,#am-side a.cur{{color:#8b83ff}}}}
 {gstyle}
 </style></head><body>
 {goverlay}
-<div id="am-app">
+<div id="am-app"><div class="am-wrap">
+{nav_html}
+<main class="am-main">
 <h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
 <p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
 {''.join(blocks)}
-<h2>Par application (global)</h2><table>{apps_rows}</table>
-</div>
+<details><summary><span class='lbl'><span class='chev'>▸</span> Par application (global)</span></summary><table>{apps_rows}</table></details>
+</main>
+</div></div>
 {gscript}
 </body></html>"""
 
@@ -872,14 +918,30 @@ def _render_index(slugs, gate_hash=None):
 </body></html>"""
 
 
-def _publish_index(cfg, opts, target, remote, base):
-    """Régénère la page index (liste de tous les rapports) sur le VPS."""
+def _list_remote_slugs(cfg):
+    """Slugs des rapports déjà publiés sur le VPS (dossiers). [] si échec."""
+    pub = cfg.get("publish") or {}
+    target = pub.get("ssh_target")
+    remote = (pub.get("remote_dir") or "").rstrip("/")
+    if not (target and remote):
+        return []
+    key = os.path.expanduser(pub.get("ssh_key", "~/.ssh/id_ed25519"))
+    opts = ["-i", key, "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
     try:
         r = subprocess.run(
             ["ssh", *opts, target, f"cd '{remote}' && ls -1d */ 2>/dev/null"],
             check=True, timeout=30, capture_output=True, text=True,
         )
-        slugs = [l.strip().rstrip("/") for l in r.stdout.splitlines() if l.strip()]
+        return [l.strip().rstrip("/") for l in r.stdout.splitlines() if l.strip()]
+    except Exception:
+        return []
+
+
+def _publish_index(cfg, opts, target, remote, base):
+    """Régénère la page index (liste de tous les rapports) sur le VPS."""
+    try:
+        slugs = _list_remote_slugs(cfg)
         html = _render_index(slugs, _gate_hash(cfg))
         local = os.path.join(REPORTS_DIR, "index.html")
         with open(local, "w", encoding="utf-8") as f:
