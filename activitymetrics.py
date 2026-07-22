@@ -1455,10 +1455,6 @@ def _render_index(slugs, gate_hash=None, day_hours=None):
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     body = (
         "<div id='am-app'>"
-        "<div class='am-tabs'>"
-        "<a class='on' href='/activityMetrics'>Mon activité</a>"
-        "<a href='https://marie.padestremau.com/' target='_blank' rel='noopener'>Marie ↗</a>"
-        "</div>"
         "<div class='am-page'>"
         "<h1>📊 ActivityMetrics</h1>"
         "<p class='am-sub'>Choisissez un jour, ou un bilan.</p>"
