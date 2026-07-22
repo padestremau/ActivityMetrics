@@ -443,8 +443,94 @@ def _period_range(args):
     if args.month:
         start = today.replace(day=1)
         return start, today + timedelta(days=1), f"{_FR_MOIS[start.month - 1].capitalize()} {start.year}"
+    if getattr(args, "year", False):
+        start = today.replace(month=1, day=1)
+        return start, today + timedelta(days=1), f"Année {start.year}"
     # défaut: aujourd'hui
     return today, today + timedelta(days=1), _fr_date(today)
+
+
+def _is_weekend():
+    """Samedi (5) ou dimanche (6) — pas de notification Telegram ces jours-là."""
+    return date.today().weekday() >= 5
+
+
+# --- File d'attente des notifications différées (ex: bilan mensuel tombé un
+# week-end → envoyé le lundi). Fichier local, gitignored (dans reports/). ------
+_PENDING_PATH = os.path.join(REPORTS_DIR, "pending_sends.json")
+
+
+def _pending_load():
+    try:
+        with open(_PENDING_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _pending_save(items):
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    with open(_PENDING_PATH, "w", encoding="utf-8") as f:
+        json.dump(items, f)
+
+
+def _enqueue_pending(slug, from_iso, to_iso, label):
+    items = _pending_load()
+    if any(x.get("slug") == slug for x in items):
+        return
+    items.append({"slug": slug, "from": from_iso, "to": to_iso, "label": label})
+    _pending_save(items)
+
+
+def _send_period(cfg, start, end, label, slug):
+    """Régénère + publie + envoie sur Telegram un rapport pour [start,end)."""
+    rows = _fetch(start, end)
+    by_app = _aggregate(rows, cfg, lambda r: r.get("app"))
+    total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: classify(r, cfg)))
+    tree = build_tree(rows, cfg)
+    nav = []
+    if cfg.get("publish"):
+        nav = _list_remote_slugs(cfg)
+        if slug not in nav:
+            nav = [slug] + nav
+    recon = None
+    if cfg.get("timesheet"):
+        ts = fetch_timesheet_days(cfg, start.isoformat(),
+                                  (end - timedelta(days=1)).isoformat())
+        if ts:
+            am = am_day_equivalents(start, end, cfg)
+            recon = {"ts": ts, "am": am,
+                     "gap": round(am["fde"] - ts["total"]["realDays"], 1)}
+    html = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
+                        nav, slug, recon)
+    url = publish_report(html, slug, cfg)
+    send_telegram(_telegram_text(label, total_s, tree, recon), button_url=url)
+    return url
+
+
+def cmd_flush(args):
+    """Rejoue les bilans différés (agent de rattrapage du lundi 9h30)."""
+    _flush_pending(load_config())
+
+
+def _flush_pending(cfg):
+    """En semaine, rejoue les rapports différés (mis en attente le week-end)."""
+    if _is_weekend():
+        return
+    pending = _pending_load()
+    if not pending:
+        return
+    keep = []
+    for p in pending:
+        try:
+            start = date.fromisoformat(p["from"])
+            end = date.fromisoformat(p["to"])
+            _send_period(cfg, start, end, p["label"], p["slug"])
+            print(f"  → Rapport différé (week-end) envoyé : {p['label']}\n")
+        except Exception as e:
+            print("Flush différé échoué:", e)
+            keep.append(p)
+    _pending_save(keep)
 
 
 def _period_slug(args, start):
@@ -453,6 +539,8 @@ def _period_slug(args, start):
         return f"semaine-{start.isoformat()}"
     if getattr(args, "month", False):
         return f"{start.year}-{start.month:02d}"
+    if getattr(args, "year", False):
+        return f"{start.year}"
     # jour précis ou aujourd'hui → date ISO
     return start.isoformat()
 
@@ -665,8 +753,23 @@ def cmd_report(args):
         print(f"  → Rapport HTML : {path}\n")
 
     if getattr(args, "telegram", False):
+        # Publication silencieuse (pas une notif) : maintenue même le week-end.
         url = publish_report(html_str, cur_slug, cfg)
-        send_telegram(_telegram_text(label, total_s, tree, recon), button_url=url)
+        force = getattr(args, "force", False)
+        if _is_weekend() and not force:
+            print("  → Week-end : notification Telegram supprimée "
+                  "(tracking et publication maintenus).\n")
+            # Un rapport non quotidien (bilan hebdo/mensuel) n'est pas perdu :
+            # on le diffère au prochain jour ouvré (lundi).
+            if not getattr(args, "today", False):
+                _enqueue_pending(cur_slug, start.isoformat(),
+                                 end.isoformat(), label)
+                print("  → Bilan différé : sera envoyé lundi 9h30.\n")
+        else:
+            # En semaine : d'abord rattraper d'éventuels bilans différés.
+            _flush_pending(cfg)
+            send_telegram(_telegram_text(label, total_s, tree, recon),
+                          button_url=url)
         if url:
             print(f"  → Détail publié : {url}\n")
 
@@ -736,12 +839,12 @@ def _nav_html(nav, current):
     """Menu latéral gauche : liens vers les derniers rapports."""
     if not nav:
         return ""
-    groups = {"Jours": [], "Semaines": [], "Mois": [], "Autres": []}
+    groups = {"Jours": [], "Semaines": [], "Mois": [], "Années": [], "Autres": []}
     for s in nav:
         cat, lbl, sk = _index_label(s)
         groups[cat].append((sk, lbl, s))
     secs = []
-    for cat in ("Jours", "Semaines", "Mois", "Autres"):
+    for cat in ("Jours", "Semaines", "Mois", "Années", "Autres"):
         items = sorted(groups[cat], reverse=True)[:8]
         if not items:
             continue
@@ -945,7 +1048,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  #am-side h3{{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#8a8aa0;margin:1rem 0 .25rem;border:0}}
  #am-side a{{display:block;padding:.2rem 0;color:inherit;text-decoration:none}}
  #am-side a:hover,#am-side a.cur{{color:#3f37c9;font-weight:700}}
- @media(max-width:720px){{.am-wrap{{flex-direction:column;gap:1rem}}#am-side{{width:auto;position:static}}#am-side h3{{margin-top:.5rem}}}}
+ @media(max-width:720px){{.am-wrap{{flex-direction:column;gap:1rem;margin:24px auto;padding:0 16px}}.am-main{{max-width:none}}#am-side{{width:auto;position:static;order:-1;font-size:.85rem}}#am-side h3{{margin-top:.4rem}}#am-side .am-home{{margin-bottom:.3rem}}#am-recon-btn{{top:10px;right:10px;padding:.4rem .7rem;font-size:.78rem}}.total{{font-size:1.7rem}}}}
  h1{{font-size:1.4rem;margin-bottom:.2rem}}
  h2,summary{{font-size:1.05rem;color:#1a1a2e;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #3f37c9;padding-bottom:.2rem}}
  h2,details{{margin-top:1.8rem}}
@@ -1041,64 +1144,81 @@ def _index_label(slug):
     if _re.fullmatch(r"\d{4}-\d{2}", slug):
         d = datetime.strptime(slug, "%Y-%m").date()
         return "Mois", f"{_FR_MOIS[d.month - 1].capitalize()} {d.year}", slug
+    if _re.fullmatch(r"\d{4}", slug):
+        return "Années", f"Année {slug}", slug
     return "Autres", slug, slug
 
 
 _INDEX_CSS = """
+ *{box-sizing:border-box}
  body{font:16px/1.6 -apple-system,system-ui,sans-serif;margin:0;color:#1a1a2e;background:#fff}
- .am-cal{max-width:600px;margin:36px auto;padding:0 20px;text-align:center}
+ .am-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid #ececf5}
+ .am-tabs a{padding:.7rem 1.1rem;color:#6b6b80;text-decoration:none;font-weight:600;font-size:.9rem;border-bottom:2px solid transparent}
+ .am-tabs a.on{color:#3f37c9;border-bottom-color:#3f37c9}
+ .am-tabs a:hover{color:#3f37c9}
+ .am-cal{max-width:600px;margin:28px auto;padding:0 20px;text-align:center}
  h1{font-size:1.4rem;margin:.2rem 0}
- .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.4rem}
+ .am-sub{color:#6b6b80;font-size:.9rem;margin:0 0 1.2rem}
  .am-cal-head{display:flex;align-items:center;justify-content:center;gap:1rem;margin:.6rem 0}
- .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:42px;height:42px;font-size:1.1rem;cursor:pointer;color:#3f37c9}
+ .am-cal-head button{border:1px solid #e0e0ea;background:#fff;border-radius:10px;width:44px;height:44px;font-size:1.1rem;cursor:pointer;color:#3f37c9}
  .am-cal-head button:hover{background:#f2f2fb}
- #mlabel{font-size:1.2rem;font-weight:700;min-width:220px;text-transform:capitalize}
- .am-mbtn{display:inline-block;margin:.2rem 0 1.2rem;padding:.55rem 1rem;border-radius:999px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}
- .am-mbtn:hover{background:#5b52e0}
- .am-mbtn.off{background:#d8d8e2;color:#9a9aab;pointer-events:none}
+ #mlabel{font-size:1.2rem;font-weight:700;min-width:200px;text-transform:capitalize}
  .am-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
  .am-wd{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#8a8aa0;font-weight:700;padding:2px 0}
- .am-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:1rem;color:#c4c4d0;background:#f5f5fa}
+ .am-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:10px;color:#c4c4d0;background:#f5f5fa}
+ .am-cell .d{font-size:1.35rem;font-weight:700;line-height:1}
+ .am-cell .hh{font-size:.6rem;font-weight:600;line-height:1.3;opacity:.9}
  .am-cell.am-empty{background:none}
- a.am-cell.am-has{color:#fff;background:#3f37c9;font-weight:700;text-decoration:none}
+ a.am-cell.am-has{background:#3f37c9;text-decoration:none}
+ a.am-cell.am-has .d,a.am-cell.am-has .hh{color:#fff}
  a.am-cell.am-has:hover{background:#5b52e0}
  .am-cell.am-today{outline:2px solid #ff8c42;outline-offset:-2px}
+ .am-bilans{display:flex;flex-direction:column;gap:10px;margin:1.6rem 0 0}
+ .am-bilan{display:block;padding:1rem 1.2rem;border-radius:14px;background:#3f37c9;color:#fff;text-decoration:none;font-weight:800;font-size:1.15rem}
+ .am-bilan.year{background:#1a1a2e}
+ .am-bilan:hover{filter:brightness(1.12)}
+ .am-bilan.off{background:#d8d8e2;color:#9a9aab;pointer-events:none}
  #weeks{margin-top:1.6rem;text-align:left}
  #weeks h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8a8aa0;margin:0 0 .3rem}
  #weeks a{display:inline-block;margin:.15rem .5rem .15rem 0;color:#3f37c9;text-decoration:none;font-weight:600}
+ @media(max-width:560px){.am-cal{margin:16px auto}.am-cell{font-size:.95rem;border-radius:8px}.am-grid{gap:4px}#mlabel{font-size:1.05rem;min-width:0}.am-bilan{font-size:1.05rem;padding:.85rem 1rem}}
  @media(prefers-color-scheme:dark){body{background:#14141f;color:#e8e8f0}
+  .am-tabs{border-color:#2a2a3a}.am-tabs a.on{color:#8b83ff;border-bottom-color:#8b83ff}.am-tabs a:hover{color:#8b83ff}
   .am-cal-head button{background:#1c1c28;border-color:#2a2a3a;color:#8b83ff}
   .am-cal-head button:hover{background:#25253a}
   .am-cell{background:#1c1c28;color:#54546a}
   a.am-cell.am-has{background:#8b83ff;color:#14141f}
   a.am-cell.am-has:hover{background:#a49dff}
-  .am-mbtn{background:#8b83ff;color:#14141f}.am-mbtn.off{background:#2a2a3a;color:#54546a}
+  .am-bilan{background:#8b83ff;color:#14141f}.am-bilan.year{background:#3a3a52;color:#e8e8f0}.am-bilan.off{background:#2a2a3a;color:#54546a}
   #weeks a{color:#8b83ff}}
 """
 
 _INDEX_JS = """
 <script>(function(){
- var DAYS=new Set(window.AM_DAYS||[]),MONTHS=new Set(window.AM_MONTHS||[]);
+ var DAYS=window.AM_DAYS||{},MONTHS=new Set(window.AM_MONTHS||[]),YEARS=new Set(window.AM_YEARS||[]);
  var FM=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
  var WD=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
  var now=new Date();
  function pad(n){return(n<10?'0':'')+n;}
+ function hlabel(v){return(''+v).replace('.',',')+'h';}
  var today=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
- var latest=(window.AM_DAYS||[]).slice().sort().pop();
+ var latest=Object.keys(DAYS).sort().pop();
  var y,m;
  if(latest){var p=latest.split('-');y=+p[0];m=+p[1]-1;}else{y=now.getFullYear();m=now.getMonth();}
+ function setBtn(el,key,has){if(has){el.href='/activityMetrics/'+key;el.classList.remove('off');}else{el.removeAttribute('href');el.classList.add('off');}}
  function render(){
   var mkey=y+'-'+pad(m+1);
   document.getElementById('mlabel').textContent=FM[m]+' '+y;
-  var mb=document.getElementById('mbtn');
-  if(MONTHS.has(mkey)){mb.href='/activityMetrics/'+mkey;mb.classList.remove('off');}
-  else{mb.removeAttribute('href');mb.classList.add('off');}
+  var mb=document.getElementById('mbtn');mb.textContent='📊 Bilan du mois — '+FM[m]+' '+y;
+  setBtn(mb,mkey,MONTHS.has(mkey));
+  var yb=document.getElementById('ybtn');yb.textContent="📅 Bilan de l'année "+y;
+  setBtn(yb,''+y,YEARS.has(''+y));
   var start=(new Date(y,m,1).getDay()+6)%7,nd=new Date(y,m+1,0).getDate(),h='';
   WD.forEach(function(d){h+='<div class="am-wd">'+d+'</div>';});
   for(var i=0;i<start;i++)h+='<div class="am-cell am-empty"></div>';
   for(var d=1;d<=nd;d++){var k=y+'-'+pad(m+1)+'-'+pad(d),t=(k===today?' am-today':'');
-   if(DAYS.has(k))h+='<a class="am-cell am-has'+t+'" href="/activityMetrics/'+k+'">'+d+'</a>';
-   else h+='<div class="am-cell'+t+'">'+d+'</div>';}
+   if(DAYS[k]!==undefined)h+='<a class="am-cell am-has'+t+'" href="/activityMetrics/'+k+'"><span class="d">'+d+'</span><span class="hh">'+hlabel(DAYS[k])+'</span></a>';
+   else h+='<div class="am-cell'+t+'"><span class="d">'+d+'</span></div>';}
   document.getElementById('grid').innerHTML=h;
  }
  document.getElementById('prev').onclick=function(){if(--m<0){m=11;y--;}render();};
@@ -1110,23 +1230,51 @@ _INDEX_JS = """
 """
 
 
-def _render_index(slugs, gate_hash=None):
-    days = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s))
+def _worked_day_hours(cfg):
+    """{date ISO: heures} des jours réellement travaillés (≥ seuil demi-journée),
+    calculé depuis la base. Sert à n'afficher au calendrier que ces jours-là."""
+    ss = cfg.get("sample_seconds", 20)
+    thr = (cfg.get("timesheet") or {}).get("hours_half_day", 2)
+    conn = db()
+    rows = conn.execute(
+        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') d, COUNT(*) n "
+        "FROM samples WHERE idle=0 GROUP BY d").fetchall()
+    conn.close()
+    out = {}
+    for d, n in rows:
+        h = round(n * ss / 3600.0, 1)
+        if h >= thr:
+            out[d] = h
+    return out
+
+
+def _render_index(slugs, gate_hash=None, day_hours=None):
+    day_hours = day_hours or {}
     months = sorted(s for s in slugs if re.fullmatch(r"\d{4}-\d{2}", s))
+    years = sorted(s for s in slugs if re.fullmatch(r"\d{4}", s))
     weeks = sorted((s for s in slugs if s.startswith("semaine-")), reverse=True)
-    data = ("<script>window.AM_DAYS=" + json.dumps(days)
+    data = ("<script>window.AM_DAYS=" + json.dumps(day_hours)
             + ";window.AM_MONTHS=" + json.dumps(months)
+            + ";window.AM_YEARS=" + json.dumps(years)
             + ";window.AM_WEEKS=" + json.dumps(weeks) + ";</script>")
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     body = (
-        "<div id='am-app'><div class='am-cal'>"
+        "<div id='am-app'>"
+        "<div class='am-tabs'>"
+        "<a class='on' href='/activityMetrics'>Mon activité</a>"
+        "<a href='https://marie.padestremau.com/' target='_blank' rel='noopener'>Marie ↗</a>"
+        "</div>"
+        "<div class='am-cal'>"
         "<h1>📊 ActivityMetrics</h1>"
-        "<p class='am-sub'>Choisissez un jour, ou le bilan du mois.</p>"
+        "<p class='am-sub'>Choisissez un jour, ou un bilan.</p>"
         "<div class='am-cal-head'><button id='prev' aria-label='Mois précédent'>◀</button>"
         "<div id='mlabel'></div>"
         "<button id='next' aria-label='Mois suivant'>▶</button></div>"
-        "<a id='mbtn' class='am-mbtn off'>Bilan du mois →</a>"
         "<div class='am-grid' id='grid'></div>"
+        "<div class='am-bilans'>"
+        "<a id='mbtn' class='am-bilan off'>Bilan du mois</a>"
+        "<a id='ybtn' class='am-bilan year off'>Bilan de l'année</a>"
+        "</div>"
         "<div id='weeks'></div>"
         "</div></div>"
     )
@@ -1162,7 +1310,7 @@ def _publish_index(cfg, opts, target, remote, base):
     """Régénère la page index (liste de tous les rapports) sur le VPS."""
     try:
         slugs = _list_remote_slugs(cfg)
-        html = _render_index(slugs, _gate_hash(cfg))
+        html = _render_index(slugs, _gate_hash(cfg), _worked_day_hours(cfg))
         local = os.path.join(REPORTS_DIR, "index.html")
         with open(local, "w", encoding="utf-8") as f:
             f.write(html)
@@ -1259,7 +1407,7 @@ def _write_calendar_agent(suffix, report_args, cal):
 
 def cmd_schedule(args):
     if args.off:
-        for suffix in ("daily", "weekly", "monthly"):
+        for suffix in ("daily", "weekly", "monthly", "catchup"):
             p = _agent_path(suffix)
             subprocess.run(["launchctl", "unload", p], capture_output=True)
             if os.path.exists(p):
@@ -1280,10 +1428,14 @@ def cmd_schedule(args):
     _write_calendar_agent(
         "monthly", ["report", "--month", "--telegram", "--if-month-end"],
         {"Hour": 18, "Minute": 10})
-    print("✅ Envois Telegram programmés :")
-    print("   • Bilan quotidien — tous les jours à 18h00")
+    # rattrapage : lundi 9h30, rejoue les bilans différés du week-end
+    _write_calendar_agent("catchup", ["flush"],
+                          {"Weekday": 1, "Hour": 9, "Minute": 30})
+    print("✅ Envois Telegram programmés (jamais le week-end) :")
+    print("   • Bilan quotidien — en semaine à 18h00 (sauté samedi/dimanche)")
     print("   • Bilan hebdo — vendredi à 18h05")
     print("   • Bilan mensuel — dernier jour du mois à 18h10")
+    print("   • Rattrapage des bilans du week-end — lundi à 9h30")
 
 
 # --------------------------------------------------------------------------- #
@@ -1417,12 +1569,16 @@ def main():
     rp.add_argument("--today", action="store_true")
     rp.add_argument("--week", action="store_true")
     rp.add_argument("--month", action="store_true")
+    rp.add_argument("--year", action="store_true")
     rp.add_argument("--day", metavar="YYYY-MM-DD")
     rp.add_argument("--html", action="store_true")
     rp.add_argument("--telegram", action="store_true")
+    rp.add_argument("--force", action="store_true",
+                    help="envoyer la notif même le week-end")
     rp.add_argument("--if-month-end", action="store_true", dest="if_month_end")
     sub.add_parser("install")
     sub.add_parser("uninstall")
+    sub.add_parser("flush")  # rejoue les bilans différés du week-end
     sc = sub.add_parser("schedule")
     sc.add_argument("--off", action="store_true")
     sub.add_parser("setup")
@@ -1435,6 +1591,7 @@ def main():
         "report": cmd_report,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
+        "flush": cmd_flush,
         "schedule": cmd_schedule,
         "setup": cmd_setup,
         "setup-telegram": cmd_setup_telegram,
