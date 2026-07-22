@@ -548,11 +548,16 @@ def send_telegram(text, button_url=None, button_text="📄 Voir le détail"):
         return False
 
 
-def _telegram_text(label, total_s, tree):
+def _telegram_text(label, total_s, tree, recon=None):
     # En-tête en gras (hors bloc), puis l'arbre en MONOSPACE (```) pour que
     # les colonnes temps/% restent alignées à droite sur mobile.
     W = 16
     head = f"📊 *ActivityMetrics* — {label}\n⏱ *{_fmt_h(total_s)}* de temps actif"
+    if recon:
+        gap = recon["gap"]
+        head += (f"\n🗓 Timesheet *{recon['ts']['total']['realDays']:.1f} j* "
+                 f"facturés · travaillés *{recon['am']['fde']:.1f} j* "
+                 f"(écart {'+' if gap >= 0 else ''}{gap:.1f} j)")
     body = []
     for proj, node in _sorted_projects(tree):
         ppct = (100 * node["total"] / total_s) if total_s else 0
@@ -636,15 +641,24 @@ def cmd_report(args):
         print()
 
     cur_slug = _period_slug(args, start)
+    want_pub = getattr(args, "html", False) or getattr(args, "telegram", False)
     # Menu latéral : liste des rapports déjà publiés (uniquement si on publie).
     nav = []
-    if (getattr(args, "html", False) or getattr(args, "telegram", False)) \
-            and cfg.get("publish"):
+    if want_pub and cfg.get("publish"):
         nav = _list_remote_slugs(cfg)
         if cur_slug not in nav:
             nav = [cur_slug] + nav
+    # Rapprochement Timesheet (jours facturés vs jours travaillés).
+    recon = None
+    if want_pub and cfg.get("timesheet"):
+        ts = fetch_timesheet_days(cfg, start.isoformat(),
+                                  (end - timedelta(days=1)).isoformat())
+        if ts:
+            am = am_day_equivalents(start, end, cfg)
+            recon = {"ts": ts, "am": am,
+                     "gap": round(am["fde"] - ts["total"]["realDays"], 1)}
     html_str = _render_html(label, total_s, tree, by_app, _gate_hash(cfg),
-                            nav, cur_slug)
+                            nav, cur_slug, recon)
 
     if getattr(args, "html", False):
         path = _write_html_local(html_str)
@@ -652,7 +666,7 @@ def cmd_report(args):
 
     if getattr(args, "telegram", False):
         url = publish_report(html_str, cur_slug, cfg)
-        send_telegram(_telegram_text(label, total_s, tree), button_url=url)
+        send_telegram(_telegram_text(label, total_s, tree, recon), button_url=url)
         if url:
             print(f"  → Détail publié : {url}\n")
 
@@ -742,8 +756,131 @@ def _nav_html(nav, current):
             f"{''.join(secs)}</nav>")
 
 
+# Script Node exécuté sur le VPS (lecture seule) : jours travaillés Timesheet
+# sur [from,to]. Timesheet stocke des demi-journées (entries am/pm) ; cat='plan'
+# = prévisionnel (non facturé), sinon réalisé.
+_TS_NODE_JS = r"""
+const nodeDir=process.argv[4]||'/opt/timesheet-api';
+const Database=require(nodeDir+'/node_modules/better-sqlite3');
+const db=new Database(nodeDir+'/data/timesheet.sqlite',{readonly:true});
+const from=process.argv[2],to=process.argv[3];
+const rows=db.prepare(`SELECT c.name AS client,
+  SUM(CASE WHEN e.cat!='plan' THEN 1 ELSE 0 END) AS realHalf,
+  SUM(CASE WHEN e.cat='plan' THEN 1 ELSE 0 END) AS planHalf
+  FROM entries e JOIN clients c ON c.id=e.client_id
+  WHERE e.date>=? AND e.date<=? AND c.is_demo=0 AND c.archived=0
+  GROUP BY c.name HAVING realHalf>0 OR planHalf>0 ORDER BY realHalf DESC`).all(from,to);
+const t=db.prepare(`SELECT
+  SUM(CASE WHEN cat!='plan' THEN 1 ELSE 0 END) AS realHalf,
+  SUM(CASE WHEN cat='plan' THEN 1 ELSE 0 END) AS planHalf,
+  COUNT(DISTINCT CASE WHEN cat!='plan' THEN date END) AS dates
+  FROM entries e JOIN clients c ON c.id=e.client_id
+  WHERE e.date>=? AND e.date<=? AND c.is_demo=0 AND c.archived=0`).get(from,to);
+console.log(JSON.stringify({clients:rows.map(r=>({client:r.client,realDays:r.realHalf/2,planDays:r.planHalf/2})),
+  total:{realDays:(t.realHalf||0)/2,planDays:(t.planHalf||0)/2,dates:t.dates||0}}));
+"""
+
+
+def fetch_timesheet_days(cfg, from_iso, to_iso):
+    """Jours travaillés Timesheet sur [from,to] via Node (ssh+sudo sur le VPS).
+    None si config absente ou échec. Aucun mot de passe : lecture directe de la
+    base en read-only via sudo."""
+    ts = cfg.get("timesheet") or {}
+    pub = cfg.get("publish") or {}
+    target = ts.get("ssh_target") or pub.get("ssh_target")
+    if not target:
+        return None
+    key = os.path.expanduser(ts.get("ssh_key") or pub.get("ssh_key",
+                                                          "~/.ssh/id_ed25519"))
+    node_dir = ts.get("node_dir", "/opt/timesheet-api")
+    opts = ["-i", key, "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    localjs = os.path.join(REPORTS_DIR, "_ts_days.js")
+    with open(localjs, "w", encoding="utf-8") as f:
+        f.write(_TS_NODE_JS)
+    try:
+        subprocess.run(["scp", *opts, localjs, f"{target}:/tmp/am_ts_days.js"],
+                       check=True, timeout=30, capture_output=True)
+        r = subprocess.run(
+            ["ssh", *opts, target,
+             f"sudo node /tmp/am_ts_days.js {from_iso} {to_iso} '{node_dir}'"],
+            check=True, timeout=30, capture_output=True, text=True,
+        )
+        return json.loads(r.stdout)
+    except Exception as e:
+        print("Timesheet: lecture échouée:", e)
+        return None
+
+
+def am_day_equivalents(start, end, cfg):
+    """Éq. jours travaillés côté ActivityMetrics : par jour calendaire,
+    ≥ hours_full_day = 1 j, ≥ hours_half_day = ½ j, sinon 0."""
+    ts = cfg.get("timesheet") or {}
+    full = ts.get("hours_full_day", 5)
+    half = ts.get("hours_half_day", 2)
+    ss = cfg.get("sample_seconds", 20)
+    conn = db()
+    s = int(time.mktime(start.timetuple()))
+    e = int(time.mktime(end.timetuple()))
+    rows = conn.execute(
+        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') d, COUNT(*) n "
+        "FROM samples WHERE idle=0 AND ts>=? AND ts<? GROUP BY d", (s, e),
+    ).fetchall()
+    conn.close()
+    fde = 0.0
+    active = 0
+    secs = 0
+    for _, n in rows:
+        h = n * ss / 3600.0
+        secs += n * ss
+        if h > 0:
+            active += 1
+        if h >= full:
+            fde += 1
+        elif h >= half:
+            fde += 0.5
+    return {"fde": round(fde, 1), "active_days": active,
+            "hours": round(secs / 3600.0, 1), "full_h": full, "half_h": half}
+
+
+def _recon_html(recon):
+    """Section « Rapprochement Timesheet » (jours facturés vs jours travaillés)."""
+    if not recon:
+        return ""
+    ts, am = recon["ts"], recon["am"]
+    gap = recon["gap"]
+    cli = "".join(
+        f"<tr class='sub'><td>↳ {_esc(c['client'])}</td>"
+        f"<td class='n'>{c['realDays']:.1f} j</td><td></td></tr>"
+        for c in ts.get("clients", [])
+    )
+    plan = ts["total"].get("planDays", 0)
+    plan_row = (f"<tr><td>dont prévisionnel (non facturé)</td>"
+                f"<td class='n'>{plan:.1f} j</td><td></td></tr>" if plan else "")
+    gap_sign = "+" if gap >= 0 else ""
+    return (
+        "<details open><summary><span class='lbl'><span class='chev'>▸</span> "
+        "Rapprochement Timesheet</span>"
+        f"<span class='pt'>{am['fde']:.1f} j vs {ts['total']['realDays']:.1f} j</span>"
+        "</summary><table>"
+        f"<tr><td><strong>Jours facturés (Timesheet)</strong></td>"
+        f"<td class='n'><strong>{ts['total']['realDays']:.1f} j</strong></td><td></td></tr>"
+        f"{cli}{plan_row}"
+        f"<tr><td><strong>Jours travaillés (ActivityMetrics)</strong><br>"
+        f"<small>≥{int(am['full_h'])}h = 1 j, {int(am['half_h'])}–{int(am['full_h'])}h = ½ j"
+        f" · {am['hours']:.0f}h actives</small></td>"
+        f"<td class='n'><strong>{am['fde']:.1f} j</strong></td><td></td></tr>"
+        f"<tr class='sub'><td>↳ jours calendaires avec activité</td>"
+        f"<td class='n'>{am['active_days']} j</td><td></td></tr>"
+        f"<tr><td><strong>Écart (activité non facturée)</strong></td>"
+        f"<td class='n'><strong>{gap_sign}{gap:.1f} j</strong></td><td></td></tr>"
+        "</table></details>"
+    )
+
+
 def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
-                 current=None):
+                 current=None, recon=None):
     """Rapport HTML complet : arbre projet › app › onglets (le « détail »)."""
     def pct(part, whole):
         return f"{round(100 * part / whole)}%" if whole else ""
@@ -777,6 +914,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
         f"<tr><td>{_esc(app)}</td><td class='n'>{_fmt_h(s)}</td></tr>"
         for app, s in by_app[:12] if s >= 60
     )
+    recon_html = _recon_html(recon)
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     nav_html = _nav_html(nav, current)
 
@@ -816,6 +954,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <main class="am-main">
 <h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
 <p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
+{recon_html}
 {''.join(blocks)}
 <details><summary><span class='lbl'><span class='chev'>▸</span> Par application (global)</span></summary><table>{apps_rows}</table></details>
 </main>

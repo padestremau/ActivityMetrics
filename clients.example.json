@@ -14,6 +14,13 @@
     "password_sha256": ""
   },
 
+  "_doc_timesheet": "OPTIONNEL. Rapprochement des jours travailles avec une base Timesheet SQLite (better-sqlite3) lisible via ssh+sudo (reuse publish.ssh_target/ssh_key). Compare les jours factures (table entries, demi-journees, cat!='plan') aux jours travailles ActivityMetrics (seuil heures->jour). Retire ce bloc pour desactiver.",
+  "timesheet": {
+    "node_dir": "/opt/timesheet-api",
+    "hours_full_day": 5,
+    "hours_half_day": 2
+  },
+
   "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUTES les clés de 'match' correspondent ; la 'priority' la plus haute gagne. Le NOM du profil Chrome n'est PAS lisible, donc on identifie le contexte via : le compte (email présent dans le titre Gmail), le domaine et l'URL. La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique.",
 
   "_cles_de_match": {
