@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-ActivityMetrics — suivi du temps par projet, en local, sur macOS.
+ActivityMetrics, suivi du temps par projet, en local, sur macOS.
 
 ═══════════════════════════════════════════════════════════════════════════════
 COMMENT ÇA MARCHE (architecture)
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. CAPTURE — Un daemon (LaunchAgent macOS) exécute `probe` toutes les 20 s :
+1. CAPTURE, Un daemon (LaunchAgent macOS) exécute `probe` toutes les 20 s :
      • app active           -> via `lsappinfo` (AUCUNE permission requise)
      • titre de la fenêtre   -> via l'API d'accessibilité (System Events)
      • Chrome : URL + domaine -> via AppleScript Chrome
@@ -14,15 +14,15 @@ COMMENT ÇA MARCHE (architecture)
    Chaque échantillon (app, titre, domaine, url, idle) est écrit BRUT dans
    SQLite (data.db). On ne stocke jamais d'interprétation : que du factuel.
 
-2. CLASSIFICATION — Elle a lieu AU MOMENT DU RAPPORT, pas à la capture. Les
+2. CLASSIFICATION, Elle a lieu AU MOMENT DU RAPPORT, pas à la capture. Les
    règles de clients.json rattachent chaque échantillon à un projet. Conséquence
    clé : éditer les règles RECLASSE rétroactivement tout l'historique déjà capté.
 
    ⚠️  Le NOM du profil Chrome n'est PAS lisible (absent de l'arbre AX). On
    identifie donc le contexte par le COMPTE (email présent dans le titre Gmail),
-   le DOMAINE et l'URL — tous fiablement captés. Voir clients.example.json.
+   le DOMAINE et l'URL, tous fiablement captés. Voir clients.example.json.
 
-3. RESTITUTION — Rapports jour / semaine / mois, en arbre hiérarchique
+3. RESTITUTION, Rapports jour / semaine / mois, en arbre hiérarchique
    (projet > application > onglets Chrome), à l'écran, en HTML, ou poussés sur
    Telegram (manuellement ou via les envois programmés).
 
@@ -127,7 +127,7 @@ def get_idle_seconds():
 
 
 def frontmost_app():
-    """App active via lsappinfo — SANS permission TCC (marche sous launchd)."""
+    """App active via lsappinfo, SANS permission TCC (marche sous launchd)."""
     try:
         asn = subprocess.run(
             ["lsappinfo", "front"], capture_output=True, text=True, timeout=5
@@ -196,13 +196,13 @@ def chrome_focused_title():
     return (out or None) if out else None
 
 
-# Chrome suffixe ses titres par « … - Google Chrome – <prénom> (<profil>) »
+# Chrome suffixe ses titres par « … - Google Chrome · <prénom> (<profil>) »
 # dès que plusieurs profils existent. Le nom entre parenthèses (= nom du
 # profil dans Local State) identifie le compte de façon fiable, alors que
 # le dictionnaire AppleScript de Chrome ne renvoie plus qu'une fenêtre
 # fantôme « about:blank » depuis Chrome 15x.
-_CHROME_PROFILE_RE = re.compile(r"Google Chrome\s*[–—-]\s*.*\(([^)]+)\)\s*$")
-_CHROME_SUFFIX_RE = re.compile(r"\s*[-–—]\s*Google Chrome\b.*$")
+_CHROME_PROFILE_RE = re.compile(r"Google Chrome\s*[·, -]\s*.*\(([^)]+)\)\s*$")
+_CHROME_SUFFIX_RE = re.compile(r"\s*[-, ]\s*Google Chrome\b.*$")
 
 
 def chrome_profile_from_title(title):
@@ -214,7 +214,7 @@ def chrome_profile_from_title(title):
 
 
 def clean_chrome_title(title):
-    """Titre de page seul, sans le suffixe « - Google Chrome – <profil> »
+    """Titre de page seul, sans le suffixe « - Google Chrome, <profil> »
     (sert de libellé d'onglet à défaut d'URL)."""
     if not title:
         return None
@@ -271,7 +271,7 @@ def chrome_profile(known):
 
 def chrome_url_via_ax():
     """URL/domaine depuis l'omnibox (barre d'adresse) via l'arbre AX.
-    Ne pilote pas Chrome par Apple events — plus robuste sous launchd que
+    Ne pilote pas Chrome par Apple events, plus robuste sous launchd que
     l'AppleScript Chrome, une fois l'Accessibilité accordée."""
     blob = osa(
         'tell application "System Events"\n'
@@ -343,7 +343,7 @@ def cmd_probe(args):
             if t and t.lower() not in ("", "about:blank"):
                 title = t
             domain = domain_of(url)
-            # Profil (= compte) lu dans le titre — le dictionnaire AppleScript
+            # Profil (= compte) lu dans le titre, le dictionnaire AppleScript
             # étant mort, c'est le signal de classification principal.
             profile = (chrome_profile_from_title(title)
                        or chrome_profile(known_profile_names()))
@@ -451,7 +451,7 @@ def _period_range(args):
 
 
 def _is_weekend():
-    """Samedi (5) ou dimanche (6) — pas de notification Telegram ces jours-là."""
+    """Samedi (5) ou dimanche (6), pas de notification Telegram ces jours-là."""
     return date.today().weekday() >= 5
 
 
@@ -574,7 +574,7 @@ def _fmt_h(seconds):
 def _fmt_row(label, secs, pct, width, sub=False):
     """Ligne à colonnes fixes: label pad, temps aligné, puis %.
     Le % d'un groupe (projet) est légèrement à gauche ; celui d'un
-    sous-élément (app/onglet) est décalé à droite, tous alignés ensemble —
+    sous-élément (app/onglet) est décalé à droite, tous alignés ensemble,
     ce qui matérialise la hiérarchie en monospace. Le % est masqué quand le
     temps est négligeable (« - »)."""
     gap = "    " if sub else " "
@@ -587,7 +587,7 @@ def _aggregate(rows, cfg, keyfn):
     sample_s = cfg.get("sample_seconds", 20)
     totals = {}
     for r in rows:
-        k = keyfn(r) or "—"
+        k = keyfn(r) or "· "
         totals[k] = totals.get(k, 0) + sample_s
     return sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
 
@@ -641,7 +641,7 @@ def _telegram_text(label, total_s, tree, recon=None):
     # En-tête en gras (hors bloc), puis l'arbre en MONOSPACE (```) pour que
     # les colonnes temps/% restent alignées à droite sur mobile.
     W = 16
-    head = f"📊 *ActivityMetrics* — {label}\n⏱ *{_fmt_h(total_s)}* de temps actif"
+    head = f"📊 *ActivityMetrics* : {label}\n⏱ *{_fmt_h(total_s)}* de temps actif"
     if recon:
         gap = recon["gap"]
         head += (f"\n🗓 Timesheet *{recon['ts']['total']['realDays']:.1f} j* "
@@ -657,7 +657,7 @@ def _telegram_text(label, total_s, tree, recon=None):
             hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
-                if tab == "—" or s < 60:
+                if tab == "· " or s < 60:
                     hidden += s
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
@@ -676,7 +676,7 @@ def build_tree(rows, cfg):
     tree = {}
     for r in rows:
         p = classify(r, cfg)
-        app = r.get("app") or "—"
+        app = r.get("app") or "· "
         node = tree.setdefault(p, {"total": 0, "apps": {}})
         node["total"] += ss
         a = node["apps"].setdefault(app, {"total": 0, "tabs": {}})
@@ -684,7 +684,7 @@ def build_tree(rows, cfg):
         if "chrome" in app.lower():
             # Libellé d'onglet : domaine si dispo, sinon titre de page (l'URL
             # n'est plus captable via AppleScript sur Chrome 15x).
-            tab = label_domain(r.get("domain"), cfg) or r.get("title") or "—"
+            tab = label_domain(r.get("domain"), cfg) or r.get("title") or "· "
             a["tabs"][tab] = a["tabs"].get(tab, 0) + ss
     return tree
 
@@ -719,7 +719,7 @@ def cmd_report(args):
     tree = build_tree(rows, cfg)
 
     W = 24
-    print(f"\n  📊  ActivityMetrics — {label}")
+    print(f"\n  📊  ActivityMetrics, {label}")
     print(f"  Temps actif total : {_fmt_h(total_s)}\n")
     for proj, node in _sorted_projects(tree):
         ppct = (100 * node["total"] / total_s) if total_s else 0
@@ -730,7 +730,7 @@ def cmd_report(args):
             hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
-                if tab == "—" or s < 60:
+                if tab == "· " or s < 60:
                     hidden += s
                     continue
                 tpct = (100 * s / a["total"]) if a["total"] else 0
@@ -973,7 +973,7 @@ def _recon_assets(recon):
         f"<td class='n'><strong>{ts['total']['realDays']:.1f} j</strong></td><td></td></tr>"
         f"{cli}{plan_row}"
         f"<tr><td><strong>Jours travaillés (ActivityMetrics)</strong><br>"
-        f"<small>≥{int(am['full_h'])}h = 1 j, {int(am['half_h'])}–{int(am['full_h'])}h = ½ j"
+        f"<small>≥{int(am['full_h'])}h = 1 j, {int(am['half_h'])}, {int(am['full_h'])}h = ½ j"
         f" · {am['hours']:.0f}h actives</small></td>"
         f"<td class='n'><strong>{am['fde']:.1f} j</strong></td><td></td></tr>"
         f"<tr class='sub'><td>↳ jours calendaires avec activité</td>"
@@ -1018,7 +1018,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
             hidden = 0
             for tab, s in sorted(a["tabs"].items(), key=lambda kv: kv[1],
                                  reverse=True):
-                if tab == "—" or s < 60:
+                if tab == "· " or s < 60:
                     hidden += s
                     continue
                 rows.append(
@@ -1055,7 +1055,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ActivityMetrics — {_esc(label)}</title>
+<title>ActivityMetrics | {_esc(label)}</title>
 <style>
  @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&display=swap');
  :root{{color-scheme:light}}
@@ -1168,7 +1168,7 @@ def publish_report(html_str, slug, cfg):
 
 def build_activity_json(cfg, days_back=240):
     """Snapshot JSON de l'activité (secondes par jour et par projet) destiné à
-    une consommation externe — p.ex. la vue native dans Timesheet. Les données
+    une consommation externe, p.ex. la vue native dans Timesheet. Les données
     brutes sont reclassées à l'export via clients.json (comme les rapports)."""
     ss = cfg.get("sample_seconds", 20)
     tcfg = cfg.get("timesheet") or {}
@@ -1463,7 +1463,7 @@ def _render_index(slugs, gate_hash=None, day_hours=None):
     )
     return ("<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>ActivityMetrics — rapports</title><style>"
+            "<title>ActivityMetrics | rapports</title><style>"
             + _INDEX_BODY_CSS + _CAL_CSS + gstyle + "</style></head><body>"
             + goverlay + body + data + _CAL_JS + gscript
             + "</body></html>")
@@ -1615,14 +1615,14 @@ def cmd_schedule(args):
     _write_calendar_agent("catchup", ["flush"],
                           {"Weekday": 1, "Hour": 9, "Minute": 30})
     print("✅ Envois Telegram programmés (jamais le week-end) :")
-    print("   • Bilan quotidien — en semaine à 18h00 (sauté samedi/dimanche)")
-    print("   • Bilan hebdo — vendredi à 18h05")
-    print("   • Bilan mensuel — dernier jour du mois à 18h10")
-    print("   • Rattrapage des bilans du week-end — lundi à 9h30")
+    print("   • Bilan quotidien, en semaine à 18h00 (sauté samedi/dimanche)")
+    print("   • Bilan hebdo, vendredi à 18h05")
+    print("   • Bilan mensuel, dernier jour du mois à 18h10")
+    print("   • Rattrapage des bilans du week-end, lundi à 9h30")
 
 
 # --------------------------------------------------------------------------- #
-# Setup — configuration guidée pour un nouvel utilisateur
+# Setup · configuration guidée pour un nouvel utilisateur
 # --------------------------------------------------------------------------- #
 DEFAULT_DOMAIN_LABELS = {
     "mail.google.com": "Gmail", "calendar.google.com": "Agenda",
@@ -1655,9 +1655,9 @@ def cmd_setup(args):
     profs = _detected_profiles()
     created = []
 
-    # 1) clients.json — échafaudé depuis les comptes Chrome détectés
+    # 1) clients.json, échafaudé depuis les comptes Chrome détectés
     if os.path.exists(CONFIG_PATH):
-        print("• clients.json existe déjà — inchangé.")
+        print("• clients.json existe déjà, inchangé.")
     else:
         rules = []
         for name, email in profs:
@@ -1678,15 +1678,15 @@ def cmd_setup(args):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         created.append("clients.json")
 
-    # 2) telegram.json — gabarit vierge
+    # 2) telegram.json, gabarit vierge
     if os.path.exists(TELEGRAM_PATH):
-        print("• telegram.json existe déjà — inchangé.")
+        print("• telegram.json existe déjà, inchangé.")
     else:
         with open(TELEGRAM_PATH, "w", encoding="utf-8") as f:
             json.dump({"token": "", "chat_id": ""}, f, indent=2)
         created.append("telegram.json")
 
-    print("\n📊 ActivityMetrics — configuration")
+    print("\n📊 ActivityMetrics, configuration")
     print("=" * 50)
     if created:
         print("Fichiers créés :", ", ".join(created))
@@ -1712,7 +1712,7 @@ def cmd_setup_telegram(args):
         with open(TELEGRAM_PATH, "r", encoding="utf-8") as f:
             conf = json.load(f)
     except Exception:
-        print("telegram.json introuvable — lance d'abord `setup`.")
+        print("telegram.json introuvable, lance d'abord `setup`.")
         return
     token = conf.get("token")
     if not token:
@@ -1743,7 +1743,7 @@ def cmd_setup_telegram(args):
 
 # --------------------------------------------------------------------------- #
 def main():
-    p = argparse.ArgumentParser(description="ActivityMetrics — suivi du temps.")
+    p = argparse.ArgumentParser(description="ActivityMetrics, suivi du temps.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("probe"); sp.add_argument("--verbose", action="store_true")

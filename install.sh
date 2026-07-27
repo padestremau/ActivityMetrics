@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 
-echo "📊 ActivityMetrics — installation"
+echo "📊 ActivityMetrics, installation"
 command -v python3 >/dev/null || { echo "❌ python3 requis (Xcode CLT : xcode-select --install)"; exit 1; }
 
 # 1. Config de classification
@@ -31,7 +31,7 @@ fi
 cat <<'EOF'
 
 ────────────────────────────────────────────────────────────
-⚠️  ÉTAPES MANUELLES (permissions macOS — sinon titres/URL vides)
+⚠️  ÉTAPES MANUELLES (permissions macOS, sinon titres/URL vides)
    Réglages Système › Confidentialité et sécurité :
    • Accessibilité : ajouter le binaire python3 affiché ci-dessus
    • Automatisation : autoriser « Google Chrome » pour System Events

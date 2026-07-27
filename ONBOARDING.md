@@ -99,5 +99,5 @@ python3 activitymetrics.py uninstall
 python3 activitymetrics.py schedule --off
 ```
 
-Des questions ? Reprends ce guide dans l'ordre — 99 % des soucis viennent de
+Des questions ? Reprends ce guide dans l'ordre, 99 % des soucis viennent de
 l'étape 3 (Accessibilité pas accordée au bon binaire Python).

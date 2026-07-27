@@ -1,7 +1,7 @@
 # 📊 ActivityMetrics
 
 Suivi du temps par projet, **100 % en local**, sur macOS. Un petit daemon
-échantillonne discrètement l'application active et — pour Chrome — le domaine et
+échantillonne discrètement l'application active et, pour Chrome, le domaine et
 l'onglet au premier plan, puis produit des rapports **par projet › application ›
 onglet**, à l'écran, en HTML, ou poussés sur **Telegram** (bilan quotidien /
 hebdo / mensuel automatique).
@@ -15,7 +15,7 @@ d'envoyer sur **ton** bot Telegram.
 - **Par onglet / outil** dans Chrome : Gmail, Agenda, un CRM, un outil métier…
 - **Plusieurs sessions Chrome** : si tu utilises plusieurs profils Chrome (perso,
   pro, un compte par contexte), ActivityMetrics distingue les contextes grâce au
-  compte connecté et au domaine — utile quand un même site (mail, CRM…) sert
+  compte connecté et au domaine, utile quand un même site (mail, CRM…) sert
   plusieurs casquettes.
 - **Détection d'inactivité** : le temps sans clavier/souris n'est pas compté.
 - **Classification rétroactive** : tu définis des règles (`clients.json`) qui
@@ -34,7 +34,7 @@ python3 activitymetrics.py setup      # détecte tes profils Chrome + prépare l
 
 `setup` génère un `clients.json` de départ et t'indique les 3 étapes manuelles :
 
-1. **Permission Accessibilité** — Réglages Système › Confidentialité et sécurité ›
+1. **Permission Accessibilité** : Réglages Système › Confidentialité et sécurité ›
    Accessibilité › ajouter le binaire Python affiché par `setup`. C'est ce qui
    autorise la lecture du titre des fenêtres (comme tout tracker de ce type).
 2. **Lancer la capture** : `python3 activitymetrics.py install`
@@ -52,7 +52,7 @@ python3 activitymetrics.py report --week --html      # + rapport HTML
 python3 activitymetrics.py report --today --telegram # + envoi Telegram
 ```
 
-## Configuration — `clients.json`
+## Configuration · `clients.json`
 
 Copie `clients.example.json` en `clients.json` (ou lance `setup`) puis adapte les
 règles. Une règle rattache une activité à un projet ; elle matche si **toutes**
@@ -67,7 +67,7 @@ ses conditions sont vraies, et la `priority` la plus haute l'emporte.
 
 > Note technique : le **nom** d'un profil Chrome n'est pas exposé par macOS. On
 > identifie donc le contexte via le **compte** (email présent dans le titre), le
-> **domaine** et l'**URL** — tous fiablement captés.
+> **domaine** et l'**URL** : tous fiablement captés.
 
 ## Envois Telegram automatiques
 
