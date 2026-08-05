@@ -50,7 +50,26 @@ python3 activitymetrics.py report --month
 python3 activitymetrics.py report --day 2026-01-15
 python3 activitymetrics.py report --week --html      # + rapport HTML
 python3 activitymetrics.py report --today --telegram # + envoi Telegram
+
+python3 activitymetrics.py doctor                    # vérifie que tout est bien capté
+python3 activitymetrics.py unclassified --month      # ce qui échappe encore aux règles
 ```
+
+### `doctor`, à lancer en premier si les chiffres semblent faux
+
+Les titres de fenêtre passent par la permission **Accessibilité**, et c'est le
+binaire python du LaunchAgent qui doit l'avoir, pas ton Terminal. Un test lancé
+à la main hérite des permissions du Terminal et passe donc toujours, même quand
+le daemon, lui, ne capte rien. `doctor` compare ce que le daemon a réellement
+écrit en base sur 24 h et donne le chemin exact à autoriser. Sans cette
+permission : aucun titre hors Chrome et aucun profil Chrome, donc la moitié du
+temps finit dans le projet par défaut. Une mise à jour des Command Line Tools
+remplace le binaire et invalide l'autorisation en silence.
+
+### `unclassified`, pour entretenir les règles
+
+Liste, par temps décroissant, les applications et onglets qui tombent dans le
+projet par défaut. Chaque ligne est une règle à écrire.
 
 ## Configuration · `clients.json`
 
@@ -60,14 +79,31 @@ ses conditions sont vraies, et la `priority` la plus haute l'emporte.
 
 | Clé de `match`   | Effet                                                  |
 |------------------|--------------------------------------------------------|
-| `title_contains` | Sous-chaîne du titre de la fenêtre (email, workspace…) |
+| `title_contains` | Sous-chaîne du titre de la fenêtre (email, workspace, nom de session Claude Code) |
 | `domain`         | Domaine exact ou sous-domaine de l'onglet Chrome       |
 | `url_contains`   | Sous-chaîne de l'URL (ex. `/nom-du-client/`)           |
+| `text_contains`  | Sous-chaîne du titre **ou** de l'URL                   |
+| `profile`        | Nom exact du profil Chrome (un profil = un compte)     |
 | `app`            | Sous-chaîne du nom de l'application                    |
 
-> Note technique : le **nom** d'un profil Chrome n'est pas exposé par macOS. On
-> identifie donc le contexte via le **compte** (email présent dans le titre), le
-> **domaine** et l'**URL** : tous fiablement captés.
+Chaque valeur accepte une **liste** (il suffit qu'un élément corresponde). Un
+bloc `exclude` optionnel, de même forme, annule la règle s'il matche.
+
+### Entités
+
+Un projet nommé `Entité · Projet` est **regroupé sous son entité** dans les
+rapports : la barre d'occupation montre les entités, le détail par projet reste
+juste en dessous. `Bary · Site` et `Bary · Mission` s'additionnent en `Bary`
+sans que tu perdes la maille fine.
+
+### Rattachement par contexte
+
+Une partie du temps n'a aucun signal exploitable : app dont le titre ne dit
+rien, Terminal sans titre, Finder. Plutôt que de gonfler le fourre-tout, ces
+échantillons héritent du projet de leurs voisins classés, **à condition que le
+voisin d'avant et celui d'après soient d'accord** et distants de moins de
+`context_fill.window_seconds`. Un trou entre deux projets différents reste non
+classé. Mets `context_fill.enabled` à `false` pour t'en tenir aux règles seules.
 
 ## Envois Telegram automatiques
 

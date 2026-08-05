@@ -21,14 +21,20 @@
     "hours_half_day": 2
   },
 
-  "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUTES les clés de 'match' correspondent ; la 'priority' la plus haute gagne. Le NOM du profil Chrome n'est PAS lisible, donc on identifie le contexte via : le compte (email présent dans le titre Gmail), le domaine et l'URL. La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique.",
+  "_doc": "Chaque règle rattache une activité à un projet. Une règle matche si TOUS les critères de 'match' passent et qu'AUCUN critère de 'exclude' ne passe ; la 'priority' la plus haute gagne. Une valeur peut être une chaîne ou une LISTE (il suffit qu'un élément corresponde). La classification a lieu au moment du rapport -> éditer ces règles reclasse tout l'historique. Utilise `python3 activitymetrics.py unclassified --month` pour voir ce qui n'est pas encore couvert, et `doctor` si les titres de fenêtre manquent.",
+
+  "_doc_entites": "Un projet nommé « Entité · Projet » (séparateur point médian) est regroupé sous « Entité » dans les rapports : la barre d'occupation affiche les entités, le détail par projet reste en dessous. Un projet sans séparateur est sa propre entité.",
+
+  "_doc_context_fill": "Un échantillon sans aucun signal exploitable (app dont le titre ne dit rien, Terminal sans titre, Finder) hérite du projet de ses voisins classés SI les deux voisins sont d'accord et distants de moins de window_seconds. Mets enabled à false pour t'en tenir strictement aux règles.",
+  "context_fill": { "enabled": true, "window_seconds": 600 },
 
   "_cles_de_match": {
-    "profile":        "nom EXACT du profil Chrome (ex: 'monentreprise.com', 'Perso'). Recommandé pour Chrome : depuis Chrome 15x l'URL n'est plus lisible, mais le profil est extrait du titre de fenêtre ('… - Google Chrome, Prénom (profil)'). Un profil = un compte = un projet.",
-    "title_contains": "sous-chaîne présente dans le titre de la fenêtre (ex: ton email pro, un nom de workspace Slack, un nom de projet)",
-    "domain":         "domaine exact ou sous-domaine de l'onglet Chrome (ex: app.hubspot.com), non captable sur Chrome 15x",
-    "url_contains":   "sous-chaîne présente dans l'URL (ex: /nom-du-client/), non captable sur Chrome 15x",
-    "app":            "sous-chaîne dans le nom de l'app (ex: Code, Slack, Figma)"
+    "profile":        "nom EXACT du profil Chrome (ex: 'monentreprise.com', 'Perso'), extrait du suffixe de titre '… Google Chrome, Prénom (profil)'. Un profil = un compte = un contexte. Nécessite l'Accessibilité pour le daemon (voir la commande doctor).",
+    "title_contains": "sous-chaîne du titre de fenêtre (email pro, workspace Slack, nom de projet, nom de session Claude Code dans le Terminal)",
+    "domain":         "domaine exact ou sous-domaine de l'onglet Chrome (ex: app.hubspot.com)",
+    "url_contains":   "sous-chaîne de l'URL (ex: /nom-du-client/)",
+    "text_contains":  "sous-chaîne du titre OU de l'URL. Le plus pratique : l'information tombe tantôt dans l'un tantôt dans l'autre.",
+    "app":            "sous-chaîne du nom de l'app (ex: Code, Slack, Terminal)"
   },
 
   "rules": [
@@ -44,7 +50,19 @@
     { "project": "Client Acme",   "priority": 45, "match": { "domain": "acme.com" } },
     { "project": "Client Acme",   "priority": 45, "match": { "url_contains": "/acme/" } },
 
-    { "project": "Dev",           "priority": 60, "match": { "app": "Code", "title_contains": "mon-repo" } }
+    { "project": "Dev",           "priority": 60, "match": { "app": "Code", "title_contains": "mon-repo" } },
+
+    { "_": "Le titre de fenêtre du Terminal porte le nom de la session Claude Code : le signal le plus précis pour savoir sur quel projet tu codes.",
+      "project": "Client Acme · Site", "priority": 90,
+      "match": { "app": "Terminal", "title_contains": ["site Acme", "acme-www"] } },
+
+    { "_": "Valeur en liste (OU) et exclusion.",
+      "project": "Client Acme · Publicité", "priority": 65,
+      "match": { "text_contains": ["Campaign Manager", "Gestionnaire de publicités"], "title_contains": "Acme" },
+      "exclude": { "text_contains": "brouillon" } },
+
+    { "_": "Filet de sécurité : une réunion non identifiée reste une réunion, pas du temps « non classé ».",
+      "project": "Réunions · Non identifiées", "priority": 10, "match": { "domain": "meet.google.com" } }
   ],
 
   "_doc_labels": "Noms lisibles pour la section 'Par onglet / outil' : clé = domaine (ou suffixe), valeur = nom affiché.",

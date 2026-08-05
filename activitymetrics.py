@@ -146,15 +146,34 @@ def frontmost_app():
 
 def frontmost_window_title(app):
     """Titre de la fenêtre active de n'importe quelle app (via AX).
-    Contient souvent le sous-contexte : workspace Slack, projet VS Code,
-    page Notion, onglet Chrome… Nécessite la permission Accessibilité."""
+    Contient souvent le sous-contexte : session Claude Code dans Terminal,
+    workspace Slack, projet VS Code, page Notion, onglet Chrome… Nécessite la
+    permission Accessibilité.
+
+    L'ordre compte : `front window` renvoie VIDE sur plusieurs apps (Terminal
+    en tête, ~60 % des échantillons perdus avant le 05/08/2026). AXFocusedWindow
+    désigne la fenêtre réellement au clavier et répond dans ces cas-là ; on
+    balaie ensuite les autres fenêtres en dernier recours."""
     if not app:
         return None
     esc = app.replace('"', '\\"')
     out = osa(
         f'tell application "System Events" to tell process "{esc}"\n'
-        '  try\n    return value of attribute "AXTitle" of front window\n  end try\n'
-        '  try\n    return value of attribute "AXTitle" of window 1\n  end try\n'
+        '  try\n'
+        '    set t to value of attribute "AXTitle" of '
+        '(value of attribute "AXFocusedWindow")\n'
+        '    if t is not missing value and t is not "" then return t\n'
+        '  end try\n'
+        '  try\n'
+        '    set t to value of attribute "AXTitle" of front window\n'
+        '    if t is not missing value and t is not "" then return t\n'
+        '  end try\n'
+        '  try\n'
+        '    repeat with w in windows\n'
+        '      set t to value of attribute "AXTitle" of w\n'
+        '      if t is not missing value and t is not "" then return t\n'
+        '    end repeat\n'
+        '  end try\n'
         '  return ""\n'
         "end tell"
     )
@@ -201,8 +220,14 @@ def chrome_focused_title():
 # profil dans Local State) identifie le compte de façon fiable, alors que
 # le dictionnaire AppleScript de Chrome ne renvoie plus qu'une fenêtre
 # fantôme « about:blank » depuis Chrome 15x.
-_CHROME_PROFILE_RE = re.compile(r"Google Chrome\s*[·, -]\s*.*\(([^)]+)\)\s*$")
-_CHROME_SUFFIX_RE = re.compile(r"\s*[-, ]\s*Google Chrome\b.*$")
+# Separateurs possibles avant « Google Chrome » dans le titre. Chrome est passe
+# du trait d'union aux tirets longs (U+2013, U+2014) courant 2026, ce qui avait
+# silencieusement tue la detection de profil : le compte n'etait plus lu.
+# (Codepoints construits par chr() : le repo interdit ces glyphes en clair.)
+_SEP = "[" + chr(0xB7) + ",\\-" + chr(0x2013) + chr(0x2014) + "\\s" + chr(0xA0) + "]"
+_CHROME_PROFILE_RE = re.compile(
+    r"Google Chrome\s*" + _SEP + r"\s*.*\(([^)]+)\)\s*$")
+_CHROME_SUFFIX_RE = re.compile(r"\s*" + _SEP + r"\s*Google Chrome\b.*$")
 
 
 def chrome_profile_from_title(title):
@@ -220,6 +245,39 @@ def clean_chrome_title(title):
         return None
     t = _CHROME_SUFFIX_RE.sub("", title).strip()
     return t or None
+
+
+_TERM_APPS = ("terminal", "iterm", "warp", "ghostty", "alacritty", "kitty")
+_TERM_SPLIT_RE = re.compile("\\s+[" + chr(0x2014) + chr(0x2013) + "-]\\s+")
+_TERM_SIZE_RE = re.compile("\\d+\\s*[x" + chr(0xD7) + "]\\s*\\d+")
+_TERM_NOISE = {"claude", "node", "zsh", "-zsh", "bash", "caffeinate", "ssh",
+               "python3", "git", "vim", "npm"}
+
+
+def is_terminal(app):
+    a = (app or "").lower()
+    return any(t in a for t in _TERM_APPS)
+
+
+def clean_terminal_title(title):
+    """Nom de la session Claude Code porté par le titre de fenêtre Terminal.
+
+    Format observé : « <user> - <spinner> <nom de session> - <cmd> ◂ claude -
+    <colonnes>x<lignes> ». On garde le seul segment porteur de sens, qui dit
+    sur quel projet la session travaille."""
+    if not title:
+        return None
+    parts = [p.strip() for p in _TERM_SPLIT_RE.split(title) if p.strip()]
+    if len(parts) >= 2:
+        parts = parts[1:]                      # retire le nom d'utilisateur
+    parts = [p for p in parts if not _TERM_SIZE_RE.fullmatch(p)]
+    if not parts:
+        return None
+    name = parts[0].split(chr(0x25C2))[0]      # « ◂ claude » collé au nom
+    name = re.sub(r"^[\W_]+", "", name).strip()   # glyphes de spinner en tête
+    if not name or name.lower() in _TERM_NOISE:
+        return None
+    return name
 
 
 def known_profile_names():
@@ -333,6 +391,12 @@ def cmd_probe(args):
             ax_title = chrome_focused_title()
             if ax_title:
                 title = ax_title
+            # Profil (= compte) : SEUL le titre AX porte le suffixe
+            # « … Google Chrome, Prénom (profil) ». Il faut donc le lire AVANT
+            # que le titre d'onglet AppleScript (qui, lui, n'a pas de suffixe)
+            # ne vienne écraser `title`, sinon le compte est perdu.
+            profile = (chrome_profile_from_title(ax_title)
+                       or chrome_profile(known_profile_names()))
             # URL : depuis Chrome 15x le dictionnaire AppleScript ne renvoie
             # plus qu'une fenêtre fantôme « about:blank ». On la traite comme
             # absente et on retombe sur l'omnibox AX.
@@ -343,10 +407,6 @@ def cmd_probe(args):
             if t and t.lower() not in ("", "about:blank"):
                 title = t
             domain = domain_of(url)
-            # Profil (= compte) lu dans le titre, le dictionnaire AppleScript
-            # étant mort, c'est le signal de classification principal.
-            profile = (chrome_profile_from_title(title)
-                       or chrome_profile(known_profile_names()))
             # Libellé propre pour la section « Par onglet / outil » à défaut d'URL.
             title = clean_chrome_title(title) or title
 
@@ -389,33 +449,126 @@ def label_domain(domain, cfg):
     return domain
 
 
+def _as_list(v):
+    return v if isinstance(v, list) else [v]
+
+
+def _match_key(key, val, sample):
+    """Un critère de règle. La valeur peut être une chaîne ou une LISTE
+    (auquel cas il suffit qu'un élément corresponde : OU logique)."""
+    vals = _as_list(val)
+    if key == "app":
+        app = (sample.get("app") or "").lower()
+        return bool(app) and any(v.lower() in app for v in vals)
+    if key == "profile":
+        return sample.get("profile") in vals
+    if key == "domain":
+        return any(_match_domain(sample.get("domain"), v) for v in vals)
+    if key == "title_contains":
+        t = (sample.get("title") or "").lower()
+        return bool(t) and any(v.lower() in t for v in vals)
+    if key == "url_contains":
+        u = (sample.get("url") or "").lower()
+        return bool(u) and any(v.lower() in u for v in vals)
+    if key == "text_contains":
+        # titre OU url : le critère le plus pratique, l'info tombe tantôt dans
+        # l'un tantôt dans l'autre selon que Chrome livre son URL ou non.
+        blob = ((sample.get("title") or "") + " "
+                + (sample.get("url") or "")).lower()
+        return bool(blob.strip()) and any(v.lower() in blob for v in vals)
+    return False
+
+
 def classify(sample, cfg):
-    """sample = dict(app, profile, domain, url, title). -> nom de projet."""
+    """sample = dict(app, profile, domain, url, title). -> nom de projet.
+
+    Une règle matche si TOUS ses critères `match` passent et qu'AUCUN de ses
+    critères `exclude` ne passe. La priorité la plus haute gagne."""
     best_project = cfg.get("default_project", "Non classé")
     best_prio = -1
     for rule in cfg.get("rules", []):
-        match = rule.get("match", {})
         prio = rule.get("priority", 0)
-        ok = True
-        for key, val in match.items():
-            if key == "app":
-                ok = bool(sample.get("app")) and val.lower() in sample["app"].lower()
-            elif key == "profile":
-                ok = sample.get("profile") == val
-            elif key == "domain":
-                ok = _match_domain(sample.get("domain"), val)
-            elif key == "title_contains":
-                ok = bool(sample.get("title")) and val.lower() in sample["title"].lower()
-            elif key == "url_contains":
-                ok = bool(sample.get("url")) and val.lower() in sample["url"].lower()
-            else:
-                ok = False
-            if not ok:
-                break
-        if ok and prio > best_prio:
-            best_prio = prio
-            best_project = rule["project"]
+        if prio <= best_prio:
+            continue
+        if not all(_match_key(k, v, sample)
+                   for k, v in rule.get("match", {}).items()):
+            continue
+        if any(_match_key(k, v, sample)
+               for k, v in (rule.get("exclude") or {}).items()):
+            continue
+        best_prio, best_project = prio, rule["project"]
     return best_project
+
+
+def classify_sequence(rows, cfg):
+    """Classe une série d'échantillons ORDONNÉS PAR ts, puis comble les trous.
+
+    Beaucoup d'échantillons n'ont aucun signal exploitable : app Claude (dont
+    le titre est toujours « Claude »), Terminal sans titre, Finder, Aperçu,
+    fenêtre de login. Les laisser en « Non classé » gonfle artificiellement le
+    fourre-tout alors que le contexte est évident : si la minute d'avant ET la
+    minute d'après sont sur le même projet, ce temps appartient à ce projet.
+
+    Garde-fous : on ne comble QUE si les deux voisins classés sont d'accord et
+    qu'ils sont chacun à moins de `window_seconds`. Un trou entre deux projets
+    différents, ou en bord de journée, reste « Non classé »."""
+    default = cfg.get("default_project", "Non classé")
+    projs = [classify(r, cfg) for r in rows]
+    fill = cfg.get("context_fill") or {}
+    if not fill.get("enabled", True) or not rows:
+        return projs
+    win = fill.get("window_seconds", 600)
+    n = len(rows)
+
+    prev_i, nxt_i = [None] * n, [None] * n
+    last = None
+    for i in range(n):
+        if projs[i] != default:
+            last = i
+        prev_i[i] = last
+    last = None
+    for i in range(n - 1, -1, -1):
+        if projs[i] != default:
+            last = i
+        nxt_i[i] = last
+
+    out = list(projs)
+    for i in range(n):
+        if projs[i] != default:
+            continue
+        p, q = prev_i[i], nxt_i[i]
+        if p is None or q is None or projs[p] != projs[q]:
+            continue
+        ts = rows[i].get("ts") or 0
+        if ts - (rows[p].get("ts") or 0) > win:
+            continue
+        if (rows[q].get("ts") or 0) - ts > win:
+            continue
+        out[i] = projs[p]
+    return out
+
+
+ENTITY_SEP = " · "
+
+
+def entity_of(project):
+    """« Bary · Site web » -> « Bary ». Un projet sans séparateur est sa propre
+    entité. Sert au regroupement de haut niveau dans les rapports."""
+    return project.split(ENTITY_SEP, 1)[0] if ENTITY_SEP in project else project
+
+
+def _by_entity(tree):
+    """[(entité, secondes, [(projet, node), ...])], trié par temps décroissant."""
+    ents = {}
+    for proj, node in tree.items():
+        e = ents.setdefault(entity_of(proj), {"total": 0, "projects": []})
+        e["total"] += node["total"]
+        e["projects"].append((proj, node))
+    out = []
+    for name, e in ents.items():
+        projs = sorted(e["projects"], key=lambda kv: kv[1]["total"], reverse=True)
+        out.append((name, e["total"], projs))
+    return sorted(out, key=lambda x: x[1], reverse=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -484,9 +637,9 @@ def _enqueue_pending(slug, from_iso, to_iso, label):
 
 def _send_period(cfg, start, end, label, slug):
     """Régénère + publie + envoie sur Telegram un rapport pour [start,end)."""
-    rows = _fetch(start, end)
+    rows = _fetch(start, end, cfg)
     by_app = _aggregate(rows, cfg, lambda r: r.get("app"))
-    total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: classify(r, cfg)))
+    total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: project_of(r, cfg)))
     tree = build_tree(rows, cfg)
     nav = []
     if cfg.get("publish"):
@@ -546,19 +699,30 @@ def _period_slug(args, start):
     return start.isoformat()
 
 
-def _fetch(start, end):
+def _fetch(start, end, cfg=None):
+    """Échantillons actifs de la période, ORDONNÉS PAR ts (l'ordre compte : le
+    rattachement par contexte lit les voisins), déjà classés (clé `_proj`)."""
     conn = db()
     cur = conn.execute(
-        "SELECT app, profile, domain, url, title FROM samples "
-        "WHERE idle = 0 AND ts >= ? AND ts < ?",
+        "SELECT ts, app, profile, domain, url, title FROM samples "
+        "WHERE idle = 0 AND ts >= ? AND ts < ? ORDER BY ts",
         (int(time.mktime(start.timetuple())), int(time.mktime(end.timetuple()))),
     )
     rows = [
-        {"app": a, "profile": p, "domain": d, "url": u, "title": t}
-        for (a, p, d, u, t) in cur.fetchall()
+        {"ts": ts, "app": a, "profile": p, "domain": d, "url": u, "title": t}
+        for (ts, a, p, d, u, t) in cur.fetchall()
     ]
     conn.close()
+    if cfg is not None:
+        for r, proj in zip(rows, classify_sequence(rows, cfg)):
+            r["_proj"] = proj
     return rows
+
+
+def project_of(r, cfg):
+    """Projet d'un échantillon, en réutilisant le passage de contexte s'il a
+    déjà eu lieu (clé `_proj` posée par _fetch)."""
+    return r.get("_proj") or classify(r, cfg)
 
 
 def _fmt_h(seconds):
@@ -574,7 +738,7 @@ def _fmt_h(seconds):
 def _fmt_row(label, secs, pct, width, sub=False):
     """Ligne à colonnes fixes: label pad, temps aligné, puis %.
     Le % d'un groupe (projet) est légèrement à gauche ; celui d'un
-    sous-élément (app/onglet) est décalé à droite, tous alignés ensemble,
+    sous-élément (app/onglet) est décalé à droite, tous alignés ensemble, 
     ce qui matérialise la hiérarchie en monospace. Le % est masqué quand le
     temps est négligeable (« - »)."""
     gap = "    " if sub else " "
@@ -648,7 +812,15 @@ def _telegram_text(label, total_s, tree, recon=None):
                  f"facturés · travaillés *{recon['am']['fde']:.1f} j* "
                  f"(écart {'+' if gap >= 0 else ''}{gap:.1f} j)")
     body = []
-    for proj, node in _sorted_projects(tree):
+    ents = _by_entity(tree)
+    if len(ents) > 1:
+        for name, tot, _p in ents:
+            epct = (100 * tot / total_s) if total_s else 0
+            body.append(_fmt_row(name, tot, epct, W))
+        body.append("")
+        body.append("· · ·")
+        body.append("")
+    for proj, node in _projects_by_entity(tree):
         ppct = (100 * node["total"] / total_s) if total_s else 0
         body.append(_fmt_row(f"▸ {proj}", node["total"], ppct, W))
         for app, a in _sorted_apps(node["apps"]):
@@ -675,18 +847,28 @@ def build_tree(rows, cfg):
     ss = cfg.get("sample_seconds", 20)
     tree = {}
     for r in rows:
-        p = classify(r, cfg)
+        p = project_of(r, cfg)
         app = r.get("app") or "· "
         node = tree.setdefault(p, {"total": 0, "apps": {}})
         node["total"] += ss
         a = node["apps"].setdefault(app, {"total": 0, "tabs": {}})
         a["total"] += ss
-        if "chrome" in app.lower():
-            # Libellé d'onglet : domaine si dispo, sinon titre de page (l'URL
-            # n'est plus captable via AppleScript sur Chrome 15x).
-            tab = label_domain(r.get("domain"), cfg) or r.get("title") or "· "
+        tab = sub_label(r, cfg)
+        if tab:
             a["tabs"][tab] = a["tabs"].get(tab, 0) + ss
     return tree
+
+
+def sub_label(r, cfg):
+    """Sous-élément affiché sous une application : onglet Chrome (domaine),
+    session Claude Code (Terminal), sinon titre de fenêtre."""
+    app = r.get("app") or ""
+    if "chrome" in app.lower():
+        # Libellé d'onglet : domaine si dispo, sinon titre de page.
+        return label_domain(r.get("domain"), cfg) or r.get("title") or "· "
+    if is_terminal(app):
+        return clean_terminal_title(r.get("title")) or "· "
+    return clean_chrome_title(r.get("title")) or "· "
 
 
 def _sorted_apps(apps):
@@ -701,6 +883,12 @@ def _sorted_projects(tree):
     return sorted(tree.items(), key=lambda kv: kv[1]["total"], reverse=True)
 
 
+def _projects_by_entity(tree):
+    """Projets triés par temps, mais REGROUPÉS par entité : les projets d'un
+    même client se suivent au lieu d'être éparpillés dans le classement."""
+    return [(proj, node) for _e, _t, projs in _by_entity(tree) for proj, node in projs]
+
+
 def cmd_report(args):
     # garde-fou "dernier jour du mois" pour le bilan mensuel auto
     if getattr(args, "if_month_end", False):
@@ -708,9 +896,9 @@ def cmd_report(args):
             return
     cfg = load_config()
     start, end, label = _period_range(args)
-    rows = _fetch(start, end)
+    rows = _fetch(start, end, cfg)
 
-    by_project = _aggregate(rows, cfg, lambda r: classify(r, cfg))
+    by_project = _aggregate(rows, cfg, lambda r: project_of(r, cfg))
     by_app = _aggregate(rows, cfg, lambda r: r.get("app"))
     by_profile = _aggregate(rows, cfg, lambda r: r.get("profile"))
     by_domain = _aggregate(rows, cfg, lambda r: label_domain(r.get("domain"), cfg))
@@ -721,7 +909,12 @@ def cmd_report(args):
     W = 24
     print(f"\n  📊  ActivityMetrics, {label}")
     print(f"  Temps actif total : {_fmt_h(total_s)}\n")
-    for proj, node in _sorted_projects(tree):
+    print("  Par entité")
+    for name, tot, _projs in _by_entity(tree):
+        epct = (100 * tot / total_s) if total_s else 0
+        print("  " + _fmt_row(f"  {name}", tot, epct, W))
+    print()
+    for proj, node in _projects_by_entity(tree):
         ppct = (100 * node["total"] / total_s) if total_s else 0
         print("  " + _fmt_row(f"▸ {proj}", node["total"], ppct, W))
         for app, a in _sorted_apps(node["apps"]):
@@ -1008,7 +1201,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
         return f"{round(100 * part / whole)}%" if whole else ""
 
     blocks = []
-    for proj, node in _sorted_projects(tree):
+    for proj, node in _projects_by_entity(tree):
         rows = []
         for app, a in _sorted_apps(node["apps"]):
             rows.append(
@@ -1046,6 +1239,33 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
         f"<td class='n'>{pct(s, total_s)}</td></tr>"
         for app, s in by_app[:12] if s >= 60
     )
+    # Barre « occupation du temps » multicolore, PAR ENTITÉ (Bary, Arkimoz…),
+    # le détail par projet restant dans l'arbre juste en dessous.
+    _PAL = ['#FF5A2C', '#0060A0', '#1E874B', '#7C3AED', '#F9C74F', '#0EA5E9', '#EC4899', '#14B8A6', '#8A8378']
+    _ents = _by_entity(tree)
+    if _ents and total_s:
+        _segs = "".join(
+            f"<span style='width:{100*tot/total_s:.2f}%;background:{_PAL[i%len(_PAL)]}' "
+            f"title=\"{_esc(name)} · {_fmt_h(tot)}\"></span>"
+            for i, (name, tot, _p) in enumerate(_ents))
+        _rows = []
+        for i, (name, tot, projs) in enumerate(_ents):
+            _rows.append(
+                f"<div class='u-r'><i style='background:{_PAL[i%len(_PAL)]}'></i>"
+                f"<span class='u-n'>{_esc(name)}</span>"
+                f"<span class='u-v'>{_fmt_h(tot)} · {pct(tot, total_s)}</span></div>")
+            if len(projs) > 1:
+                for proj, node in projs:
+                    sub = proj.split(ENTITY_SEP, 1)[1] if ENTITY_SEP in proj else proj
+                    _rows.append(
+                        f"<div class='u-r u-sub'><i></i>"
+                        f"<span class='u-n'>{_esc(sub)}</span>"
+                        f"<span class='u-v'>{_fmt_h(node['total'])} · "
+                        f"{pct(node['total'], tot)}</span></div>")
+        usage_html = (f"<div class='u-bar'>{_segs}</div>"
+                      f"<div class='u-leg'>{''.join(_rows)}</div>")
+    else:
+        usage_html = ""
     recon_btn, recon_overlay, recon_script = _recon_assets(recon)
     gstyle, goverlay, gscript = _gate_assets(gate_hash)
     nav_html = _nav_html(nav, current)
@@ -1096,6 +1316,17 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
  tr.sub td{{color:#6b6b80;font-size:.92rem;padding-left:1.2rem}}
  .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
  small{{color:#6b6b80}}
+ .u-bar{{display:flex;height:22px;border-radius:999px;overflow:hidden;background:#F2EEE6;margin:1.2rem 0 .6rem}}
+ .u-bar span{{height:100%;min-width:2px}}
+ .u-leg{{display:flex;flex-direction:column;gap:.55rem;margin-bottom:.6rem}}
+ .u-r{{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:10px;font-size:.9rem}}
+ .u-r i{{width:13px;height:13px;border-radius:4px}}
+ .u-r .u-n{{font-weight:600}}
+ .u-r .u-v{{color:#6b6b80;font-variant-numeric:tabular-nums;font-weight:700}}
+ .u-r.u-sub{{font-size:.82rem;padding-left:16px;margin-top:-.2rem}}
+ .u-r.u-sub .u-n{{font-weight:400;color:#6b6b80}}
+ .u-r.u-sub .u-v{{font-weight:600}}
+ .u-r.u-sub i{{width:6px;height:6px;border-radius:50%;background:#c9c4bb;margin-left:4px}}
  #am-recon-btn{{position:fixed;top:16px;right:16px;z-index:60;padding:.5rem .85rem;border:1px solid #FF5A2C;border-radius:999px;background:#fff;color:#FF5A2C;font-size:.85rem;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
  #am-recon-btn b{{font-weight:800}}
  #am-recon-btn:hover{{background:#FF5A2C;color:#fff}}
@@ -1116,6 +1347,7 @@ def _render_html(label, total_s, tree, by_app, gate_hash=None, nav=None,
 <main class="am-main">
 <h1>📊 ActivityMetrics</h1><small>{_esc(label)}</small>
 <p class="total">{_fmt_h(total_s)}</p><small>de temps actif</small>
+{usage_html}
 {''.join(blocks)}
 <details><summary><span class='lbl'><span class='chev'>▸</span> Par application (global)</span></summary><table>{apps_rows}</table></details>
 </main>
@@ -1177,19 +1409,31 @@ def build_activity_json(cfg, days_back=240):
     conn = db()
     cur = conn.execute(
         "SELECT ts, app, profile, domain, url, title FROM samples "
-        "WHERE idle = 0 AND ts >= ?", (since,))
+        "WHERE idle = 0 AND ts >= ? ORDER BY ts", (since,))
+    rows = [{"ts": tsx, "app": a, "profile": p, "domain": d, "url": u, "title": t}
+            for (tsx, a, p, d, u, t) in cur.fetchall()]
+    conn.close()
     days = {}
-    for (tsx, a, p, d, u, t) in cur.fetchall():
-        rec = {"app": a, "profile": p, "domain": d, "url": u, "title": t}
-        day = time.strftime("%Y-%m-%d", time.localtime(tsx))
-        proj = classify(rec, cfg)
-        e = days.setdefault(day, {"seconds": 0, "by_project": {}})
+    for rec, proj in zip(rows, classify_sequence(rows, cfg)):
+        day = time.strftime("%Y-%m-%d", time.localtime(rec["ts"]))
+        app = rec.get("app") or "?"
+        ent = entity_of(proj)
+        # by_project : secondes par projet (rétro-compat) ; by_entity : même
+        # chose regroupé par entité (« Bary · Sites & LP » -> « Bary »).
+        # tree : projet -> {seconds, apps:{app:sec}} ; by_app : total par application.
+        e = days.setdefault(day, {"seconds": 0, "by_project": {}, "by_entity": {},
+                                  "tree": {}, "by_app": {}})
         e["seconds"] += ss
         e["by_project"][proj] = e["by_project"].get(proj, 0) + ss
-    conn.close()
+        e["by_entity"][ent] = e["by_entity"].get(ent, 0) + ss
+        tp = e["tree"].setdefault(proj, {"seconds": 0, "apps": {}})
+        tp["seconds"] += ss
+        tp["apps"][app] = tp["apps"].get(app, 0) + ss
+        e["by_app"][app] = e["by_app"].get(app, 0) + ss
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "sample_seconds": ss,
+        "entity_sep": ENTITY_SEP,
         "thresholds": {
             "full_hours": tcfg.get("hours_full_day", 5),
             "half_hours": tcfg.get("hours_half_day", 2),
@@ -1260,9 +1504,9 @@ def cmd_republish(args):
         if not rng:
             print(f"  … {slug} (format inconnu, ignoré)"); continue
         start, end, label = rng
-        rows = _fetch(start, end)
+        rows = _fetch(start, end, cfg)
         by_app = _aggregate(rows, cfg, lambda r: r.get("app"))
-        total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: classify(r, cfg)))
+        total_s = sum(v for _, v in _aggregate(rows, cfg, lambda r: project_of(r, cfg)))
         tree = build_tree(rows, cfg)
         recon = None
         if cfg.get("timesheet"):
@@ -1506,8 +1750,8 @@ def _publish_index(cfg, opts, target, remote, base):
 def cmd_status(args):
     cfg = load_config()
     today = date.today()
-    rows = _fetch(today, today + timedelta(days=1))
-    by_project = _aggregate(rows, cfg, lambda r: classify(r, cfg))
+    rows = _fetch(today, today + timedelta(days=1), cfg)
+    by_project = _aggregate(rows, cfg, lambda r: project_of(r, cfg))
     total_s = sum(v for _, v in by_project)
     print(f"Aujourd'hui : {_fmt_h(total_s)} actif")
     for name, s in by_project:
@@ -1546,6 +1790,104 @@ def cmd_install(args):
     print(f"Échantillonnage toutes les {interval}s.")
     if r.returncode != 0:
         print("launchctl:", r.stderr.strip())
+
+
+def _launchd_python():
+    """Chemin du binaire python utilisé par le LaunchAgent (c'est LUI qui doit
+    avoir l'Accessibilité, pas le python du shell)."""
+    try:
+        with open(LAUNCH_AGENT_PATH, "r", encoding="utf-8") as f:
+            m = re.search(r"<string>([^<]*python[^<]*)</string>", f.read())
+        return m.group(1) if m else sys.executable
+    except Exception:
+        return sys.executable
+
+
+def cmd_doctor(args):
+    """Vérifie que chaque signal est réellement capté, et par le DAEMON.
+
+    Piège classique : les tests lancés depuis le Terminal héritent des
+    permissions du Terminal et passent tous, alors que le daemon launchd,
+    lui, n'a rien. On compare donc aussi ce que le daemon a écrit en base."""
+    cfg = load_config()
+    print("\n  🩺  ActivityMetrics, diagnostic\n")
+
+    app = frontmost_app()
+    print(f"  App au premier plan (lsappinfo)   : {app or 'ÉCHEC'}")
+    title = frontmost_window_title(app)
+    print(f"  Titre de fenêtre (Accessibilité)  : "
+          f"{(title[:52] + '…') if title and len(title) > 52 else (title or 'ÉCHEC')}")
+    u, t = chrome_active_tab()
+    print(f"  Onglet Chrome (Automation)        : {domain_of(u) or u or 'aucune fenêtre'}")
+
+    # Ce que le DAEMON a écrit récemment : seul juge de paix.
+    conn = db()
+    since = int(time.time()) - 24 * 3600
+    tot, tit = conn.execute(
+        "SELECT count(*), sum(title IS NOT NULL AND title <> '') FROM samples "
+        "WHERE idle = 0 AND ts >= ? AND app IS NOT NULL "
+        "AND lower(app) NOT LIKE '%chrome%'", (since,)).fetchone()
+    prof_tot, prof = conn.execute(
+        "SELECT count(*), sum(profile IS NOT NULL) FROM samples "
+        "WHERE idle = 0 AND ts >= ? AND lower(app) LIKE '%chrome%'",
+        (since,)).fetchone()
+    conn.close()
+    rate = (100 * (tit or 0) / tot) if tot else 0
+    prate = (100 * (prof or 0) / prof_tot) if prof_tot else 0
+    print(f"\n  Sur 24 h, hors Chrome : {tit or 0}/{tot or 0} échantillons "
+          f"avec un titre ({rate:.0f} %)")
+    print(f"  Sur 24 h, Chrome      : {prof or 0}/{prof_tot or 0} échantillons "
+          f"avec un profil ({prate:.0f} %)")
+
+    if tot and rate < 50:
+        py = _launchd_python()
+        print("\n  ⚠️  ACCESSIBILITÉ MANQUANTE POUR LE DAEMON.")
+        print("  Sans elle : aucun titre de fenêtre hors Chrome (Terminal,")
+        print("  Slack, app Claude) et aucun profil Chrome. La moitié de la")
+        print("  classification tombe donc dans « Non classé ».")
+        print("\n  Réglages Système > Confidentialité et sécurité > Accessibilité")
+        print(f"  puis ajouter (bouton +, Cmd+Maj+G pour coller le chemin) :\n\n    {py}\n")
+        print("  Si l'entrée existe déjà, la retirer et la rajouter : une mise à")
+        print("  jour des Command Line Tools remplace le binaire et invalide")
+        print("  l'autorisation en silence.")
+        print("\n  Puis : launchctl kickstart -k gui/$(id -u)/com.activitymetrics")
+        print("  et relancer ce diagnostic 1 min plus tard.")
+    else:
+        print("\n  ✅  Capture nominale.")
+
+
+def cmd_unclassified(args):
+    """Ce qui tombe encore dans le fourre-tout, trié par temps perdu.
+
+    C'est l'outil d'entretien de clients.json : chaque ligne est un signal
+    (app, onglet, session) qui mériterait sa règle. Le rattachement par
+    contexte est neutralisé ici, sinon on ne verrait plus les trous."""
+    cfg = load_config()
+    cfg = dict(cfg, context_fill={"enabled": False})
+    start, end, label = _period_range(args)
+    rows = _fetch(start, end, cfg)
+    default = cfg.get("default_project", "Non classé")
+    ss = cfg.get("sample_seconds", 20)
+
+    buckets, unknown_s, total_s = {}, 0, 0
+    for r in rows:
+        total_s += ss
+        if project_of(r, cfg) != default:
+            continue
+        unknown_s += ss
+        key = (r.get("app") or "?", sub_label(r, cfg) or "· ")
+        buckets[key] = buckets.get(key, 0) + ss
+
+    pct = (100 * unknown_s / total_s) if total_s else 0
+    print(f"\n  🔎  Non classé, {label}")
+    print(f"  {_fmt_h(unknown_s)} sur {_fmt_h(total_s)} ({pct:.0f} %)\n")
+    limit = getattr(args, "limit", 30) or 30
+    for (app, lab), s in sorted(buckets.items(), key=lambda kv: kv[1],
+                                reverse=True)[:limit]:
+        if s < 60:
+            continue
+        print(f"  {_fmt_h(s):>6}  {app[:18]:<18}  {lab[:60]}")
+    print("\n  Ajoute les lignes qui te parlent dans clients.json (rules).")
 
 
 def cmd_uninstall(args):
@@ -1759,6 +2101,15 @@ def main():
     rp.add_argument("--force", action="store_true",
                     help="envoyer la notif même le week-end")
     rp.add_argument("--if-month-end", action="store_true", dest="if_month_end")
+    up = sub.add_parser("unclassified",
+                        help="ce qui tombe encore dans « Non classé »")
+    up.add_argument("--today", action="store_true")
+    up.add_argument("--week", action="store_true")
+    up.add_argument("--month", action="store_true")
+    up.add_argument("--year", action="store_true")
+    up.add_argument("--day", metavar="YYYY-MM-DD")
+    up.add_argument("--limit", type=int, default=30)
+    sub.add_parser("doctor")
     sub.add_parser("install")
     sub.add_parser("uninstall")
     sub.add_parser("flush")  # rejoue les bilans différés du week-end
@@ -1773,6 +2124,8 @@ def main():
         "probe": cmd_probe,
         "status": cmd_status,
         "report": cmd_report,
+        "unclassified": cmd_unclassified,
+        "doctor": cmd_doctor,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "flush": cmd_flush,
