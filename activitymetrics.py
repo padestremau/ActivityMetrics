@@ -804,7 +804,8 @@ def send_telegram(text, button_url=None, button_text="📄 Voir le détail"):
 def _telegram_text(label, total_s, tree, recon=None):
     # En-tête en gras (hors bloc), puis l'arbre en MONOSPACE (```) pour que
     # les colonnes temps/% restent alignées à droite sur mobile.
-    W = 16
+    # 19 et pas 16 : les noms « Entité · Projet » sont plus longs qu'avant.
+    W = 19
     head = f"📊 *ActivityMetrics* : {label}\n⏱ *{_fmt_h(total_s)}* de temps actif"
     if recon:
         gap = recon["gap"]
